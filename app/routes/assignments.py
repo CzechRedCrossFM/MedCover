@@ -257,8 +257,9 @@ def do_assign_user(
         db.session.rollback()
         return AssignResult(ok=False, error="Tato pozice byla právě obsazena někým jiným.", event=event)
 
-    mailer.send_assignment_confirmed(user, event, spot_description=spot.description)
-    db.session.commit()
+    if user.id != assigned_by.id:
+        mailer.send_assignment_confirmed(user, event, spot_description=spot.description)
+        db.session.commit()
     return AssignResult(
         ok=True,
         assignment=spot.assignment,
@@ -535,8 +536,9 @@ def do_assign_event(
     except IntegrityError:
         db.session.rollback()
         return AssignResult(False, "Uživatel je již přihlášen na tuto akci.", event=event)
-    mailer.send_assignment_confirmed(user, event)
-    db.session.commit()
+    if user.id != assigned_by.id:
+        mailer.send_assignment_confirmed(user, event)
+        db.session.commit()
     return AssignResult(
         True,
         assignment=assignment,

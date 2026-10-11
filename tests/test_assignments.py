@@ -22,6 +22,19 @@ from tests.conftest import _login, _make_event_with_spot, _make_user
 
 
 class TestAssignmentClaim:
+    def test_member_self_claim_does_not_send_confirmation(self, app, member_client, monkeypatch):
+        _, spot_id = _make_event_with_spot(app)
+        sent = []
+        monkeypatch.setattr(
+            "app.routes.assignments.mailer.send_assignment_confirmed",
+            lambda *args, **kwargs: sent.append(1),
+        )
+
+        response = member_client.post(f"/assignments/claim/{spot_id}", follow_redirects=False)
+
+        assert response.status_code == 302
+        assert sent == []
+
     def test_member_can_claim_open_spot(self, app, member_client):
         event_id, spot_id = _make_event_with_spot(app)
         response = member_client.post(f"/assignments/claim/{spot_id}", follow_redirects=False)
@@ -159,6 +172,15 @@ class TestAdminAssignment:
         with app.app_context():
             assignment = db.session.scalar(db.select(Assignment).where(Assignment.spot_id == spot_id))
             assert assignment is not None
+            notification = db.session.scalars(
+                db.select(OutboxEmail).where(
+                    OutboxEmail.event_id == event_id,
+                    OutboxEmail.user_id == assignment.user_id,
+                    OutboxEmail.notification_type == "assignment_confirmed",
+                )
+            ).one()
+            assert notification.to_email == "target@test.com"
+            assert notification.status == "pending"
 
     def test_member_cannot_assign_others(self, app, member_client):
         event_id, spot_id = _make_event_with_spot(app)
