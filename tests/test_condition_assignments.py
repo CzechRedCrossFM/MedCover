@@ -32,6 +32,21 @@ def _condition_event(app, maximum=2):
     return event_id
 
 
+def test_condition_self_claim_does_not_send_confirmation(app, monkeypatch):
+    event_id = _condition_event(app)
+    sent = []
+    monkeypatch.setattr(
+        "app.routes.assignments.mailer.send_assignment_confirmed",
+        lambda *args, **kwargs: sent.append(1),
+    )
+    with app.app_context(), patch("app.routes.assignments.audit"):
+        user = _make_user("self-claim@test.com", "Self Claim", Role.MEMBER)
+        result = do_assign_event(event_id, user, user, self_claim=True)
+
+    assert result.ok
+    assert sent == []
+
+
 def test_capacity_claim_release_rp_and_qualification_change(app, client):
     event_id = _condition_event(app)
     with app.app_context():
