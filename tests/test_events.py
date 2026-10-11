@@ -22,7 +22,15 @@ from app.models.role import Role
 from app.models.settings import get_settings
 from app.models.user import EventTimeFormat, UserAccount
 from app.utils import format_event_time
-from tests.conftest import _get_csrf, _login, _make_event_in_status, _make_master_event, _make_rp_qual, _make_user
+from tests.conftest import (
+    _get_csrf,
+    _login,
+    _make_event_in_status,
+    _make_event_with_spot,
+    _make_master_event,
+    _make_rp_qual,
+    _make_user,
+)
 
 
 def _event_form_data(master_event_id: int, name: str = "Test Event", rp_qual_id: int | None = None) -> dict:
@@ -211,6 +219,45 @@ class TestEventListPermissions:
     def test_event_list_accessible_for_admin(self, admin_client):
         response = admin_client.get("/events/")
         assert response.status_code == 200
+
+    def test_assigned_rp_is_not_offered_second_spot(self, app, member_client):
+        me_id = _make_master_event(app, name="Assigned RP Series")
+        event_id, assigned_spot_id = _make_event_with_spot(
+            app, status=EventStatus.ASSIGNMENTS_OPEN, name="Already assigned RP", me_id=me_id
+        )
+        rp_qual_id = _make_rp_qual(app)
+        with app.app_context():
+            event = db.session.get(Event, event_id)
+            member = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "member@test.com"))
+            member.qualifications = [db.session.get(Qualification, rp_qual_id)]
+            open_spot = EventSpot(event_id=event_id)
+            db.session.add(open_spot)
+            db.session.flush()
+            db.session.add(
+                Assignment(
+                    event_id=event_id,
+                    spot_id=assigned_spot_id,
+                    user_id=member.id,
+                    assigned_by_id=member.id,
+                )
+            )
+            event.responsible_person_id = member.id
+            db.session.commit()
+            open_spot_id = open_spot.id
+
+        response = member_client.get("/events/?statuses=ASSIGNMENTS_OPEN")
+
+        assert response.status_code == 200
+        assert b"Already assigned RP" in response.data
+        assert f'action="/assignments/claim/{open_spot_id}"'.encode() not in response.data
+
+        response = member_client.get("/events/?statuses=ASSIGNMENTS_OPEN&for_me=1")
+        assert response.status_code == 200
+        assert b"Already assigned RP" not in response.data
+
+        feed = member_client.get("/events/feed").get_json()
+        listed_event = next(item for item in feed if item["id"] == event_id)
+        assert listed_event["extendedProps"]["eligible"] is False
 
     def test_event_list_has_me_filter_select(self, admin_client):
         response = admin_client.get("/events/")
