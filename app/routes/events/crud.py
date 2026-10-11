@@ -164,13 +164,13 @@ def _build_eligible_spot_map(events: list[Event]) -> dict[int, list[tuple[int, s
     if not current_user.has_permission("event.assign_own"):
         return {}
 
-    user_assigned_spot_ids = set(
-        db.session.scalars(db.select(Assignment.spot_id).where(Assignment.user_id == current_user.id)).all()
+    user_assigned_event_ids = set(
+        db.session.scalars(db.select(Assignment.event_id).where(Assignment.user_id == current_user.id)).all()
     )
     fillable_ids = user_fillable_qual_ids(current_user)
     result: dict[int, list[tuple[int, str | None, list[str], bool]]] = {}
     for e in events:
-        if e.status != EventStatus.ASSIGNMENTS_OPEN:
+        if e.status != EventStatus.ASSIGNMENTS_OPEN or e.id in user_assigned_event_ids:
             continue
         eligible = [
             (
@@ -180,7 +180,7 @@ def _build_eligible_spot_map(events: list[Event]) -> dict[int, list[tuple[int, s
                 s.is_optional,
             )
             for s in e.spots
-            if s.assignment is None and s.id not in user_assigned_spot_ids and s.is_eligible_for(fillable_ids)
+            if s.assignment is None and s.is_eligible_for(fillable_ids)
         ]
         if eligible:
             result[e.id] = eligible
@@ -192,12 +192,12 @@ def _eligible_event_ids_for_user(user: UserAccount) -> list[int]:
 
     Mirrors _build_eligible_spot_map: only ASSIGNMENTS_OPEN events, uses
     EventSpot.is_eligible_for as the single source of truth for deleted-qual
-    filtering and fillable-qual checks, and excludes spots already held by
-    the user.
+    filtering and fillable-qual checks, and excludes events where the user is
+    already assigned.
     """
     fillable_ids = user_fillable_qual_ids(user)
-    user_assigned_spot_ids = set(
-        db.session.scalars(db.select(Assignment.spot_id).where(Assignment.user_id == user.id)).all()
+    user_assigned_event_ids = set(
+        db.session.scalars(db.select(Assignment.event_id).where(Assignment.user_id == user.id)).all()
     )
 
     events = db.session.scalars(db.select(Event).where(Event.status == EventStatus.ASSIGNMENTS_OPEN)).all()
@@ -205,13 +205,11 @@ def _eligible_event_ids_for_user(user: UserAccount) -> list[int]:
     eligible_event_ids = {
         e.id
         for e in events
-        if (
+        if e.id not in user_assigned_event_ids
+        and (
             can_join_event(e, user)
             if e.staffing_mode == StaffingMode.CONDITIONS
-            else any(
-                s.assignment is None and s.id not in user_assigned_spot_ids and s.is_eligible_for(fillable_ids)
-                for s in e.spots
-            )
+            else any(s.assignment is None and s.is_eligible_for(fillable_ids) for s in e.spots)
         )
     }
 
@@ -361,23 +359,21 @@ def feed() -> Response:
     events = db.session.scalars(query).all()
 
     # Build eligible spot set for current user (same logic as index view)
-    user_assigned_spot_ids: set[int] = set()
+    user_assigned_event_ids: set[int] = set()
     fillable_ids: set[int] = set()
     if current_user.has_permission("event.assign_own"):
-        assigned = db.session.scalars(db.select(Assignment).where(Assignment.user_id == current_user.id)).all()
-        user_assigned_spot_ids = {a.spot_id for a in assigned}
+        user_assigned_event_ids = set(
+            db.session.scalars(db.select(Assignment.event_id).where(Assignment.user_id == current_user.id)).all()
+        )
         fillable_ids = user_fillable_qual_ids(current_user)
 
     items = []
     for e in events:
         color = STATUS_COLORS.get(e.status.value, "#6c757d")
         eligible = False
-        if current_user.has_permission("event.assign_own"):
-            eligible = any(
-                s.assignment is None and s.id not in user_assigned_spot_ids and s.is_eligible_for(fillable_ids)
-                for s in e.spots
-            )
-        if e.staffing_mode == StaffingMode.CONDITIONS:
+        if current_user.has_permission("event.assign_own") and e.id not in user_assigned_event_ids:
+            eligible = any(s.assignment is None and s.is_eligible_for(fillable_ids) for s in e.spots)
+        if e.staffing_mode == StaffingMode.CONDITIONS and e.id not in user_assigned_event_ids:
             eligible = can_join_event(e, current_user)
         items.append(
             {
