@@ -82,7 +82,7 @@
         <th class="col-13e">Čas</th>
         <th>Uživatel</th>
         <th>Akce</th>
-        <th>Entita</th>
+        <th class="maxw-9r">Entita</th>
         <th>Popis</th>
         <th></th>
       </tr>
@@ -101,7 +101,7 @@
           }.get(entry.action_type, 'secondary') %}
           <span class="badge bg-{{ badge }}">{{ entry.action_type }}</span>
         </td>
-        <td class="small text-nowrap">
+        <td class="small text-break maxw-9r">
           {% set entity_url = audit_entity_url(entry.entity_type, entry.entity_id) %}
           {% if entity_url %}
             <a href="{{ entity_url }}" class="text-muted text-decoration-none">
