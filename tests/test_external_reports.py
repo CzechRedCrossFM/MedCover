@@ -1,0 +1,176 @@
+"""Expanded external reporting permissions retain the event visibility boundary."""
+
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
+
+import pytest
+from flask_login import login_user
+from openpyxl import load_workbook
+
+from app.extensions import db
+from app.models.assignment import Assignment
+from app.models.equipment import EquipmentItem, EquipmentType
+from app.models.event import Event, EventSpot, EventStatus
+from app.models.role import Role
+from app.models.user import UserAccount
+from app.routes.reports import UserStats, _resolve_next_shifts
+from tests.conftest import _make_event_with_spot, _make_user
+from tests.test_external_events import make_opportunity
+
+
+@pytest.fixture
+def report_events(app, external_client):
+    visible_id, spot_id = make_opportunity(app, name="Visible report opportunity")
+    with app.app_context():
+        member = _make_user("crew@test.com", "Report Crew", Role.MEMBER)
+        member_id = member.id
+        visible = db.session.get(Event, visible_id)
+        visible.spots.append(EventSpot())
+        me_id = visible.master_event_id
+        db.session.add(Assignment(event_id=visible_id, spot_id=spot_id, user_id=member_id))
+        db.session.commit()
+    hidden_id, hidden_spot_id = _make_event_with_spot(app, me_id=me_id, name="Hidden full report event")
+    draft_id, _ = _make_event_with_spot(app, me_id=me_id, name="Hidden draft report event", status=EventStatus.DRAFT)
+    unrelated_id, _ = make_opportunity(app, days=30, name="Hidden unrelated report event")
+    with app.app_context():
+        hidden = db.session.get(Event, hidden_id)
+        hidden.start_datetime = datetime.now(timezone.utc) + timedelta(days=1)
+        hidden.end_datetime = hidden.start_datetime + timedelta(hours=4)
+        db.session.add(Assignment(event_id=hidden_id, spot_id=hidden_spot_id, user_id=member_id))
+        db.session.commit()
+        unrelated_me_id = db.session.get(Event, unrelated_id).master_event_id
+    return visible_id, me_id, member_id, hidden_id, draft_id, unrelated_me_id
+
+
+def workbook_text(response):
+    workbook = load_workbook(BytesIO(response.data))
+    return " ".join(str(cell.value) for sheet in workbook for row in sheet for cell in row)
+
+
+@pytest.mark.parametrize(
+    "kind,format",
+    [
+        ("user", None),
+        ("user", "csv"),
+        ("master", None),
+        ("master", "csv"),
+        ("range", None),
+        ("range", "csv"),
+        ("work-summary", None),
+        ("work-summary", "xlsx"),
+    ],
+)
+def test_external_reports_filter_hidden_events(app, external_client, report_events, kind, format):
+    _, me_id, member_id, _, _, _ = report_events
+    now = datetime.now(timezone.utc)
+    dates = {
+        "from_date": (now - timedelta(days=60)).date().isoformat(),
+        "to_date": (now + timedelta(days=60)).date().isoformat(),
+    }
+    urls = {
+        "user": f"/reports/user/{member_id}",
+        "master": f"/reports/master-event/{me_id}",
+        "range": "/reports/date-range",
+        "work-summary": "/reports/work-summary",
+    }
+    response = external_client.get(urls[kind], query_string={**dates, **({"format": format} if format else {})})
+    assert response.status_code == 200
+    text = workbook_text(response) if format == "xlsx" else response.get_data(as_text=True)
+    assert "Visible report opportunity" in text
+    assert "Hidden full report event" not in text
+    assert "Hidden draft report event" not in text
+    assert "Hidden unrelated report event" not in text
+
+
+@pytest.mark.parametrize("url", ["/reports/", "/reports/printout"])
+def test_external_report_selectors_hide_unavailable_master_events(external_client, report_events, url):
+    response = external_client.get(url)
+    assert response.status_code == 200
+    assert b"ME for Visible report opportunity" in response.data
+    assert b"ME for Hidden unrelated report event" not in response.data
+
+
+def test_external_cannot_get_hidden_master_report(external_client, report_events):
+    unrelated_me_id = report_events[-1]
+    assert external_client.get(f"/reports/master-event/{unrelated_me_id}").status_code == 403
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_external_printout_filters_guessed_hidden_event_ids(external_client, report_events, selected):
+    visible_id, me_id, _, hidden_id, draft_id, _ = report_events
+    url = "/events/printout" if selected else "/reports/printout"
+    data = {"event_ids": [visible_id, hidden_id, draft_id]} if selected else {"me_id": str(me_id)}
+    response = external_client.post(url, data=data)
+    assert response.status_code == 200
+    text = workbook_text(response)
+    assert "Visible report opportunity" in text
+    assert "Hidden full report event" not in text
+    assert "Hidden draft report event" not in text
+
+
+def test_external_next_shift_statistics_do_not_reveal_hidden_assignment(app, external_client, report_events):
+    visible_id, _, member_id, _, _, _ = report_events
+    with app.test_request_context():
+        external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
+        login_user(external)
+        member = db.session.get(UserAccount, member_id)
+        stats = UserStats()
+        _resolve_next_shifts([(member, stats)], datetime.now(timezone.utc))
+        assert stats.next_shift == db.session.get(Event, visible_id).start_datetime
+
+
+def test_external_can_generate_own_work_report_but_not_another_users(app, external_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "instance_path", str(tmp_path))
+    completed_id, completed_spot = _make_event_with_spot(app, name="Own paid completed", status=EventStatus.COMPLETED)
+    draft_id, draft_spot = _make_event_with_spot(app, name="Own paid draft", status=EventStatus.DRAFT)
+    with app.app_context():
+        external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
+        for event_id, spot_id in [(completed_id, completed_spot), (draft_id, draft_spot)]:
+            event = db.session.get(Event, event_id)
+            event.start_datetime = datetime(2026, 1, 14, 10, tzinfo=timezone.utc)
+            event.end_datetime = event.start_datetime + timedelta(hours=4)
+            event.paid = True
+            db.session.add(Assignment(event_id=event_id, spot_id=spot_id, user_id=external.id))
+        db.session.commit()
+        other = _make_user("other@test.com", "Other", Role.MEMBER)
+        other_id = other.id
+    assert external_client.get("/work-report/").status_code == 200
+    response = external_client.post("/work-report/generate", data={"year": "2026", "month": "1"}, follow_redirects=True)
+    assert response.status_code == 200
+    assert "/work-report/download" in response.get_data(as_text=True)
+    downloaded = external_client.get("/work-report/download?year=2026&month=1")
+    assert downloaded.status_code == 200
+    text = workbook_text(downloaded)
+    assert "Own paid completed" in text
+    assert "Own paid draft" not in text
+    assert external_client.get(f"/work-report/?user_id={other_id}").status_code == 403
+    assert (
+        external_client.post(
+            "/work-report/generate", data={"year": "2026", "month": "1", "user_id": str(other_id)}
+        ).status_code
+        == 403
+    )
+
+
+def test_external_can_take_and_return_personal_equipment(app, external_client):
+    with app.app_context():
+        equipment_type = EquipmentType(name="External kit")
+        item = EquipmentItem(name="Shared kit", equipment_type=equipment_type)
+        db.session.add(item)
+        db.session.commit()
+        item_id = item.id
+    assert external_client.get("/equipment/").status_code == 200
+    assert external_client.get("/equipment/items/").status_code == 200
+    assert external_client.post(f"/equipment/items/{item_id}/take").status_code == 302
+    with app.app_context():
+        external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
+        assert db.session.get(EquipmentItem, item_id).issued_to_id == external.id
+        assert external.has_permission("equipment_item.report_own")
+    assert external_client.post(f"/equipment/items/{item_id}/return").status_code == 302
+    with app.app_context():
+        assert db.session.get(EquipmentItem, item_id).issued_to_id is None
+
+
+@pytest.mark.parametrize("url", ["/equipment/types/create", "/equipment/items/create"])
+def test_external_does_not_gain_equipment_administration(external_client, url):
+    assert external_client.get(url).status_code == 403
