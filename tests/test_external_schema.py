@@ -69,6 +69,15 @@ def test_event_migration_defaults_existing_events_to_automatic_window(app):
         assert db.session.scalar(text("SELECT open_to_externals FROM event WHERE id=:id"), {"id": event_id}) == 0
 
 
+def test_notification_migration_defaults_existing_settings_to_enabled(app):
+    with app.app_context():
+        migration = load_migration("6c0d2e3f4051_external_opportunity_notifications.py")
+        migration.downgrade()
+        migration.upgrade()
+        db.session.commit()
+        assert db.session.scalar(text("SELECT notify_external_opportunities FROM app_settings WHERE id=1")) == 1
+
+
 def test_external_scope_survives_backup_restore(app):
     event_id, _ = _make_event_with_spot(app)
     with app.app_context():
