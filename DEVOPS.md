@@ -920,7 +920,7 @@ Both the English `CHANGELOG.md` and the Czech `changelog.html` must be updated t
 
 ## Notification Catalog
 
-The app sends 13 types of email notifications.  The **authoritative source of truth** is
+The **authoritative source of truth** for email notification types is
 `NOTIFICATION_CATALOG` in `app/mail.py`.  The admin UI at `/admin/notifications/` renders
 this list and exposes per-type toggles stored in `AppSettings`.
 
@@ -942,7 +942,7 @@ behaviour of the application.
 
 ### Notification toggles
 
-Nine toggle fields are stored in `AppSettings` (one per togglable catalog entry; each
+Toggle fields are stored in `AppSettings` (each
 maps 1:1 to a `notify_<code>` column, per the rule above):
 
 | Field | Controls |
@@ -956,6 +956,9 @@ maps 1:1 to a `notify_<code>` column, per the rule above):
 | `notify_event_changed` | `send_event_changed` |
 | `notify_unfilled_reminder` | `send_unfilled_spots_reminder` (scheduler) |
 | `notify_debriefing` | `send_debriefing_invitation` |
+| `notify_external_opportunities` | `send_external_opportunity` (scheduler, every 5 minutes) |
+
+External opportunity mail uses the existing outbox to batch newly available events per recipient.
 
 Auth-related notifications (`account_activated`, invite/password reset (`auth`), `admin_digest`)
 are always-on and cannot be toggled.

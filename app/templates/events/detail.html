@@ -45,7 +45,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="version" value="{{ event.version }}">
         <input type="hidden" name="open_to_externals" value="{{ '0' if event.open_to_externals else '1' }}">
-        <button class="btn btn-outline-primary btn-sm">{{ 'Zrušit předčasné otevření externím' if event.open_to_externals else 'Otevřít externím předčasně' }}</button>
+        <button class="btn btn-outline-primary btn-sm">{{ 'Zrušit předčasné otevření externistům' if event.open_to_externals else 'Otevřít externistům předčasně' }}</button>
       </form>
     {% endif %}
     {# Lifecycle transition buttons #}

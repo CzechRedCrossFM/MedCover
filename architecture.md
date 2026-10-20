@@ -37,6 +37,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
 | Admin | Admin | System administrator role; can do everything except confidential debriefing |
 | Koordinátor | Coordinator | Can create/manage events and assign staff |
 | Člen | Member | Regular member; can join events and submit debriefings |
+| Externí spolupracovník | External | Restricted collaborator from a friendly organization |
 | Divák | Viewer | Read-only access |
 | Vedoucí debriefingu | Debriefing Manager | Exclusive access to confidential debriefing records |
 | Zodpovědná osoba (ZO) | Responsible Person (RP) / `responsible_person` | The person leading an event on site; field: `Event.responsible_person_id` |
@@ -617,22 +618,25 @@ When in doubt about the correct Czech UI label or English code name for a concep
     - **Context:** The app sends several categories of outbound email. As real user accounts are imported from external sources (Google Sheets) before users are aware of the app, uncontrolled email delivery to all users is a risk. A clear policy is needed for which roles receive which notification types, and what the Viewer role means in the context of email.
     - **Decision:** Email notifications are gated by role. The mapping is:
 
-        | Notification type | Admin | Coordinator | Member | Viewer |
-        |---|---|---|---|---|
-        | Daily admin digest | ✓ | — | — | — |
-        | Event published / assignments opened | — | ✓ | ✓ | — |
-        | Assignment confirmed / released | — | — | ✓ | — |
-        | Unfilled spot reminder (RP) | — | ✓ | ✓* | — |
-        | Invite / password reset / account activation | ✓ | ✓ | ✓ | ✓ |
+        | Notification type | Admin | Coordinator | Member | Viewer | External |
+        |---|---|---|---|---|---|
+        | Daily admin digest | ✓ | — | — | — | — |
+        | Event published / assignments opened | — | ✓ | ✓ | — | — |
+        | Assignment confirmed / released | — | — | ✓ | — | ✓ |
+        | Own participation changes / cancellation / archiving / debriefing | — | — | ✓ | — | ✓ |
+        | Unfilled spot reminder (RP) | — | ✓ | ✓* | — | — |
+        | New external opportunities | — | — | — | — | ✓ |
+        | Invite / password reset / account activation | ✓ | ✓ | ✓ | ✓ | ✓ |
 
         *\*Member receives unfilled-spot reminders only when they are the Responsible Person of the event.*
 
     - **Viewer role constraints (additional):**
-        - Viewer is the **minimum role** for accessing the application. Viewers can read most data but cannot be assigned to event spots.
-        - **Member is the minimum role for event participation** (spot assignment, RP designation). This is enforced at the model/route layer when claiming spots and when setting `event.responsible_person`.
+        - Viewer is a read-only internal role. Viewers can read most data but cannot be assigned to event spots.
+        - Member and External allow event participation and RP designation, subject to qualifications. External participation is restricted by the external access policy; it never grants assignment management through the RP exception.
         - Because Viewers cannot hold spots, they can never be RP, which eliminates any ambiguity about RP-targeted emails for Viewer-only accounts.
         - If a user holds *only* the Viewer role, they receive **no operational emails** (only auth emails: invite, password reset, activation). This makes the Viewer role suitable for imported accounts not yet onboarded.
         - If a user holds Viewer **plus at least one other role**, the other roles determine notification eligibility (Viewer does not suppress).
+    - **External roles:** Only active external collaborators who can join an available opportunity receive its invitation. External is exclusive and cannot be combined with any other role; individual and bulk role assignments enforce this. Internal roles retain ordinary additive permissions. Once delivered, the same event invitation is not repeated; pending invitations are revalidated.
     - **Dev/staging safety net:** A separate `dev_email_block` toggle in AppSettings (see AD15 / admin settings) allows blanket suppression of all non-allowlisted emails on dev instances. This is independent of role-based gating and acts as a last line of defence.
     - **Consequences:**
         - No per-user notification preferences needed for MVP; role assignment is the control knob.
