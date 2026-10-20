@@ -564,7 +564,7 @@ CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]
 
 ## Dependency Management
 
-Dependencies are managed with **pip-tools** (`.in` → `.txt` compilation with hashes).
+Dependencies are compiled with **uv pip compile** (`.in` → `.txt` compilation with hashes).
 
 ### Files
 
@@ -586,11 +586,11 @@ Dependencies are managed with **pip-tools** (`.in` → `.txt` compilation with h
    ```bash
    ./scripts/compile_requirements.sh
    ```
-   This uses Podman (or Docker) to compile inside a `python:3.14-slim` Linux/amd64 container — ensuring the generated hashes match CI and production.
+   This uses Podman (or Docker) to compile inside a `python:3.14-slim` Linux/amd64 container. Production and E2E compile in parallel; dev and telemetry compile in parallel after production finishes. The cache is discarded when the container exits.
 3. Review the diff: `git diff requirements*.txt`
 4. Commit both the `.in` and `.txt` files together.
 
-> **Why a container?** pip-compile on macOS ARM produces hashes for macOS-only wheels. Some packages ship different wheels for Linux, causing hash mismatches in CI. The container guarantees Linux-compatible hashes.
+> **Why a container?** Dependency resolution can vary by platform and Python version. The container keeps compilation aligned with CI and production.
 
 ### Dependabot
 
