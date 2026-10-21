@@ -49,7 +49,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
 |---|---|---|
 | Koncept | `DRAFT` | Visible to coordinators only; not accepting assignments |
 | Zveřejněná | `PUBLISHED` | Public, assignments not yet open |
-| Přihlášky otevřeny | `ASSIGNMENTS_OPEN` | Members can claim spots |
+| Přihlášky otevřeny | `ASSIGNMENTS_OPEN` | Members and eligible External users can claim spots; External users remain subject to the external access policy |
 | Přihlášky uzavřeny | `ASSIGNMENTS_CLOSED` | Registration closed; event in progress |
 | Dokončena | `COMPLETED` | Event finished; debriefing period begins |
 | Zrušena | `CANCELLED` | Event cancelled; can be restored by coordinator |
@@ -632,7 +632,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
 
     - **Viewer role constraints (additional):**
         - Viewer is a read-only internal role. Viewers can read most data but cannot be assigned to event spots.
-        - Member and External allow event participation and RP designation, subject to qualifications. External participation is restricted by the external access policy; it never grants assignment management through the RP exception.
+        - Member and External allow event participation and RP designation, subject to qualifications. Eligible External users may claim spots on `ASSIGNMENTS_OPEN` events under the external access policy; serving as RP never grants them assignment management through the RP exception.
         - Because Viewers cannot hold spots, they can never be RP, which eliminates any ambiguity about RP-targeted emails for Viewer-only accounts.
         - If a user holds *only* the Viewer role, they receive **no operational emails** (only auth emails: invite, password reset, activation). This makes the Viewer role suitable for imported accounts not yet onboarded.
         - If a user holds Viewer **plus at least one other role**, the other roles determine notification eligibility (Viewer does not suppress).
@@ -1023,75 +1023,78 @@ Pre-defined roles (see AD01):
 - **Admin** — full system access except confidential debriefing records
 - **Coordinator** — create/manage events and assign staff
 - **Member** — join events, submit debriefings
+- **External** — exclusive role for collaborators from friendly organizations; claim eligible spots under the external access policy and serve as RP subject to qualifications, without assignment management through the RP exception
 - **Viewer** — read-only access; minimum role for using the application
 - **Debriefing Manager** — exclusive access to confidential debriefing records; intentionally separate from Admin to protect participant confidentiality
 
-**Responsible Person (RP)** is not a separate Role but a contextual responsibility assigned to a specific user for a specific Event. The RP gains `event.assignments.open`, `event.assignments.close`, and `event.notification.send` scoped to that Event only.
+**Responsible Person (RP)** is not a separate Role but a contextual responsibility assigned to a specific user for a specific Event. A Member serving as RP gains `event.assignments.open`, `event.assignments.close`, and `event.notification.send` scoped to that Event only. Eligible External users may also serve as RP, but the RP exception grants them none of these permissions and does not allow them to manage assignments.
 
 ### Permissions
 
-| Permission | Admin | Coordinator | Member | Viewer | Debriefing Manager |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **Users** | | | | | |
-| user.view | ✓ | ✓ | ✓ | ✓ | — |
-| user.edit_own | ✓ | ✓ | ✓ | — | — |
-| user.edit_any | ✓ | — | — | — | — |
-| user.activate / deactivate | ✓ | — | — | — | — |
-| user.assign_role | ✓ | — | — | — | — |
-| user.assign_qualification | ✓ | — | — | — | — |
-| invite.create | ✓ | — | — | — | — |
-| **Qualifications** | | | | | |
-| qualification.view | ✓ | ✓ | ✓ | ✓ | — |
-| qualification.create / edit / delete | ✓ | — | — | — | — |
-| **Master Events** | | | | | |
-| master_event.view | ✓ | ✓ | ✓ | ✓ | — |
-| master_event.create / edit | ✓ | ✓ | — | — | — |
-| master_event.archive / unarchive | ✓ | — | — | — | — |
-| **Events** | | | | | |
-| event.view (Published and later) | ✓ | ✓ | ✓ | ✓ | — |
-| event.view_draft | ✓ | ✓ | — | — | — |
-| event.create / edit | ✓ | ✓ | — | — | — |
-| event.publish | ✓ | ✓ | — | — | — |
-| event.assignments.open / close | ✓ | ✓ | RP* | — | — |
-| event.cancel / restore | ✓ | ✓ | — | — | — |
-| event.delete (archived, permanent) | ✓ | — | — | — | — |
-| event.assign_own (join / leave) | ✓ | ✓ | ✓ | — | — |
-| event.assign_other | ✓ | ✓ | — | — | — |
-| event.set_responsible_person | ✓ | ✓ | — | — | — |
-| event.notification.send (manual) | ✓ | ✓ | RP* | — | — |
-| **Event Templates** | | | | | |
-| event_template.view | ✓ | ✓ | ✓ | ✓ | — |
-| event_template.create / edit / delete | ✓ | ✓ | — | — | — |
-| **Equipment** | | | | | |
-| equipment.view | ✓ | ✓ | ✓ | ✓ | — |
-| equipment_type.create / edit / delete | ✓ | — | — | — | — |
-| equipment_item.create / edit / delete | ✓ | — | — | — | — |
-| equipment_item.issue_personal | ✓ | ✓ | ✓ | — | — |
-| equipment_item.report_own | ✓ | ✓ | ✓ | — | — |
-| event.equipment.plan | ✓ | ✓ | — | — | — |
-| event.equipment.assign | ✓ | ✓ | — | — | — |
-| **Debriefing** | | | | | |
-| debriefing.submit_own | ✓ | ✓ | ✓ | — | ✓ |
-| debriefing.view_own | ✓ | ✓ | ✓ | — | ✓ |
-| debriefing.view_all (confidential) | — | — | — | — | ✓ |
-| debriefing.manage | — | — | — | — | ✓ |
-| **Reports** | | | | | |
-| report.view | ✓ | ✓ | ✓ | ✓ | — |
-| work_report.generate | ✓ | ✓ | ✓ | — | — |
-| work_report.generate_any | ✓ | ✓ | — | — | — |
-| **Audit** | | | | | |
-| audit.view | ✓ | — | — | — | — |
-| **Admin / System** | | | | | |
-| admin.view | ✓ | — | — | — | — |
-| admin.manage_settings | ✓ | — | — | — | — |
-| admin.manage_digest | ✓ | — | — | — | — |
-| **Backup** | | | | | |
-| backup.run | ✓ | — | — | — | — |
-| backup.download | ✓ | — | — | — | — |
-| backup.restore | ✓ | — | — | — | — |
-| backup.delete | ✓ | — | — | — | — |
+| Permission | Admin | Coordinator | Member | Viewer | Debriefing Manager | External |
+|---|:---:|:---:|:---:|:---:|:---:| :---: |
+| **Users** | | | | | |  |
+| user.view | ✓ | ✓ | ✓ | ✓ | — | — |
+| user.edit_own | ✓ | ✓ | ✓ | — | — | ✓ |
+| user.edit_any | ✓ | — | — | — | — | — |
+| user.activate / deactivate | ✓ | — | — | — | — | — |
+| user.assign_role | ✓ | — | — | — | — | — |
+| user.assign_qualification | ✓ | — | — | — | — | — |
+| invite.create | ✓ | — | — | — | — | — |
+| **Qualifications** | | | | | |  |
+| qualification.view | ✓ | ✓ | ✓ | ✓ | — | — |
+| qualification.create / edit / delete | ✓ | — | — | — | — | — |
+| **Master Events** | | | | | |  |
+| master_event.view | ✓ | ✓ | ✓ | ✓ | — | — |
+| master_event.create / edit | ✓ | ✓ | — | — | — | — |
+| master_event.archive / unarchive | ✓ | — | — | — | — | — |
+| **Events** | | | | | |  |
+| event.view (Published and later) | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| event.view_draft | ✓ | ✓ | — | — | — | — |
+| event.create / edit | ✓ | ✓ | — | — | — | — |
+| event.publish | ✓ | ✓ | — | — | — | — |
+| event.assignments.open / close | ✓ | ✓ | RP* | — | — | — |
+| event.cancel / restore | ✓ | ✓ | — | — | — | — |
+| event.delete (archived, permanent) | ✓ | — | — | — | — | — |
+| event.assign_own (join / leave) | ✓ | ✓ | ✓ | — | — | ✓ |
+| event.assign_other | ✓ | ✓ | — | — | — | — |
+| event.set_responsible_person | ✓ | ✓ | — | — | — | — |
+| event.notification.send (manual) | ✓ | ✓ | RP* | — | — | — |
+| **Event Templates** | | | | | |  |
+| event_template.view | ✓ | ✓ | ✓ | ✓ | — | — |
+| event_template.create / edit / delete | ✓ | ✓ | — | — | — | — |
+| **Equipment** | | | | | |  |
+| equipment.view | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| equipment_type.create / edit / delete | ✓ | — | — | — | — | — |
+| equipment_item.create / edit / delete | ✓ | — | — | — | — | — |
+| equipment_item.issue_personal | ✓ | ✓ | ✓ | — | — | ✓ |
+| equipment_item.report_own | ✓ | ✓ | ✓ | — | — | ✓ |
+| event.equipment.plan | ✓ | ✓ | — | — | — | — |
+| event.equipment.assign | ✓ | ✓ | — | — | — | — |
+| **Debriefing** | | | | | |  |
+| debriefing.submit_own | ✓ | ✓ | ✓ | — | ✓ | ✓ |
+| debriefing.view_own | ✓ | ✓ | ✓ | — | ✓ | ✓ |
+| debriefing.view_all (confidential) | — | — | — | — | ✓ | — |
+| debriefing.manage | — | — | — | — | ✓ | — |
+| **Reports** | | | | | |  |
+| report.view | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| work_report.generate | ✓ | ✓ | ✓ | — | — | ✓ |
+| work_report.generate_any | ✓ | ✓ | — | — | — | — |
+| **Audit** | | | | | |  |
+| audit.view | ✓ | — | — | — | — | — |
+| **Admin / System** | | | | | |  |
+| admin.view | ✓ | — | — | — | — | — |
+| admin.manage_settings | ✓ | — | — | — | — | — |
+| admin.manage_digest | ✓ | — | — | — | — | — |
+| **Backup** | | | | | |  |
+| backup.run | ✓ | — | — | — | — | — |
+| backup.download | ✓ | — | — | — | — | — |
+| backup.restore | ✓ | — | — | — | — | — |
+| backup.delete | ✓ | — | — | — | — | — |
 
-*\*RP (Responsible Person)* — a Member who is the RP of an Event gains `event.assignments.open`, `event.assignments.close`, and `event.notification.send` scoped to that specific Event only.
+*\*RP (Responsible Person)* — a Member who is the RP of an Event gains `event.assignments.open`, `event.assignments.close`, and `event.notification.send` scoped to that specific Event only. Eligible External users may also serve as RP, subject to qualifications, but do not gain `event.assignments.open`, `event.assignments.close`, or `event.notification.send` through the RP exception and cannot manage other users’ assignments.
+
+**External permissions:** External has only the explicit grants shown above (`ROLE_PERMISSIONS[Role.EXTERNAL]`); it inherits no permissions from Member or Viewer and cannot be combined with another role. `event.view` is limited to available external opportunities and the user’s own non-draft assigned events; `event.assign_own` permits joining eligible opportunities or leaving their own assignments under the external access policy. Receiving opportunity invitations and own-participation notifications (AD17) does not grant `event.notification.send` for manual notifications.
 
 **Note on Admin and debriefing:** Admin intentionally does **not** hold `debriefing.view_all` or `debriefing.manage`. Only the Debriefing Manager role has access to confidential participant responses. This is a deliberate privacy boundary (see `Role._ADMIN_EXCLUDED_PERMISSIONS` in `app/models/role.py`).
 
