@@ -3166,3 +3166,11 @@ class TestEquipmentPlanOnEdit:
         with app.app_context():
             event = db.session.get(Event, event_id)
             assert len(event.equipment_plans) == 0
+
+
+def test_event_navigation_list_belongs_to_the_person_logged_in(app, member_client):
+    event_id, _ = _make_event_with_spot(app)
+    with app.app_context():
+        user_id = str(db.session.scalar(db.select(UserAccount.id).where(UserAccount.email == "member@test.com")))
+    assert f'"userId": "{user_id}"' in member_client.get("/events/").get_data(as_text=True)
+    assert f'data-user-id="{user_id}"' in member_client.get(f"/events/{event_id}").get_data(as_text=True)
