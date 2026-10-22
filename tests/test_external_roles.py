@@ -183,3 +183,26 @@ def test_manual_create_accepts_external_alone(app, admin_client):
         user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "target@test.com"))
         assert user.is_external
         assert [role.name for role in user.roles] == [Role.EXTERNAL]
+
+
+def test_external_role_is_shown_as_externi_while_its_name_stays_external(app, admin_client):
+    with app.app_context():
+        user = _make_user("eva@test.com", "Eva Nováková", Role.EXTERNAL)
+        user_id = user.id
+        role = user.roles[0]
+        role_id = role.id
+        assert (role.name, role.label, role.slug) == ("External", "Externí", "external")
+    assert "Externí</th>" in admin_client.get("/admin/permissions").get_data(as_text=True)
+
+    detail = admin_client.get(f"/users/{user_id}").get_data(as_text=True)
+    assert 'data-role-name="External"' in detail
+    assert f'<label class="form-check-label" for="role_{role_id}">Externí</label>' in detail
+
+    index = admin_client.get("/users/").get_data(as_text=True)
+    assert 'role=External"' in index and ">Externí</a>" in index
+    assert '<span class="badge bg-secondary">Externí</span>' in index
+    filtered = admin_client.get("/users/?role=External").get_data(as_text=True)
+    assert "Eva Nováková" in filtered
+
+    create = admin_client.get("/users/create").get_data(as_text=True)
+    assert 'data-role-name="External"' in create and ">Externí</label>" in create
