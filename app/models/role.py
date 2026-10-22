@@ -78,7 +78,7 @@ class Role(db.Model):  # type: ignore[misc]
 def validate_role_combination(roles: Sequence[Role]) -> None:
     names = {role.name for role in roles}
     if Role.EXTERNAL in names and len(names) > 1:
-        raise ValueError("Role External nesmí být kombinována s jinými rolemi.")
+        raise ValueError("Role „Externí“ nesmí být kombinována s jinými rolemi.")
 
 
 def exclusive_roles(roles: Sequence[Role]) -> tuple[list[Role], list[str]]:
