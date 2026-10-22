@@ -132,7 +132,7 @@
         </div>
         <div class="card-body">
           {% if current_user.has_permission('user.assign_role') %}
-          <p class="form-text">Role External je samostatná; nelze ji kombinovat s dalšími rolemi.</p>
+          <p class="form-text">Role „Externí“ je samostatná; nelze ji kombinovat s dalšími rolemi.</p>
           <div class="d-flex flex-wrap gap-2">
             {% for role in all_roles %}
             <div class="form-check">
