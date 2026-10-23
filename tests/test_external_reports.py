@@ -152,8 +152,10 @@ def test_external_can_generate_own_work_report_but_not_another_users(app, extern
     )
 
 
-def test_external_can_take_and_return_personal_equipment(app, external_client):
+@pytest.mark.parametrize("action", ["take", "issue"])
+def test_external_can_take_and_return_personal_equipment(app, external_client, action):
     with app.app_context():
+        external_id = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com")).id
         equipment_type = EquipmentType(name="External kit")
         item = EquipmentItem(name="Shared kit", equipment_type=equipment_type)
         db.session.add(item)
@@ -161,7 +163,8 @@ def test_external_can_take_and_return_personal_equipment(app, external_client):
         item_id = item.id
     assert external_client.get("/equipment/").status_code == 200
     assert external_client.get("/equipment/items/").status_code == 200
-    assert external_client.post(f"/equipment/items/{item_id}/take").status_code == 302
+    response = external_client.post(f"/equipment/items/{item_id}/{action}", data={"user_id": str(external_id)})
+    assert response.status_code == 302
     with app.app_context():
         external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
         assert db.session.get(EquipmentItem, item_id).issued_to_id == external.id
@@ -169,6 +172,47 @@ def test_external_can_take_and_return_personal_equipment(app, external_client):
     assert external_client.post(f"/equipment/items/{item_id}/return").status_code == 302
     with app.app_context():
         assert db.session.get(EquipmentItem, item_id).issued_to_id is None
+
+
+@pytest.mark.parametrize("action", ["issue", "return"])
+@pytest.mark.parametrize("role", ["external", "member"])
+def test_equipment_actions_on_other_users_items(app, request, action, role):
+    client = request.getfixturevalue(f"{role}_client")
+    with app.app_context():
+        other = _make_user("equipment-holder@test.com", "Equipment Holder", Role.MEMBER)
+        other_id = other.id
+        equipment_type = EquipmentType(name="Ownership test kit")
+        item = EquipmentItem(name="Ownership test item", equipment_type=equipment_type)
+        if action == "return":
+            item.issued_to_id = other_id
+            item.issued_at = datetime.now(timezone.utc)
+        db.session.add(item)
+        db.session.commit()
+        item_id = item.id
+        original_holder = item.issued_to_id
+    response = client.post(f"/equipment/items/{item_id}/{action}", data={"user_id": str(other_id)})
+    assert response.status_code == (403 if role == "external" else 302)
+    with app.app_context():
+        item = db.session.get(EquipmentItem, item_id)
+        if role == "external":
+            assert item.issued_to_id == original_holder
+        else:
+            assert item.issued_to_id == (other_id if action == "issue" else None)
+
+
+def test_external_equipment_controls_do_not_offer_other_user_actions(app, external_client):
+    with app.app_context():
+        other = _make_user("other-holder@test.com", "Other Holder", Role.MEMBER)
+        item = EquipmentItem(name="Other users kit", equipment_type=EquipmentType(name="Other kit type"))
+        item.issued_to_id = other.id
+        db.session.add(item)
+        db.session.commit()
+        item_id = item.id
+    response = external_client.get("/equipment/items/")
+    assert response.status_code == 200
+    assert b'id="issueItemModal"' not in response.data
+    assert b"btn-open-issue" not in response.data
+    assert f'action="/equipment/items/{item_id}/return"'.encode() not in response.data
 
 
 @pytest.mark.parametrize("url", ["/equipment/types/create", "/equipment/items/create"])
