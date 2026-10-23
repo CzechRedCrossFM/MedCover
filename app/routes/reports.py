@@ -800,13 +800,16 @@ def _work_summary_data(from_dt: datetime, to_dt: datetime) -> list[WorkSummaryGr
 
     # One row per assigned person per event. Someone holding two spots on the
     # same event must not have their hours counted twice, hence the DISTINCT.
-    assignments = db.session.execute(
+    assignment_query = (
         db.select(Assignment.user_id, UserAccount.name, Assignment.event_id)
         .join(Event, Assignment.event_id == Event.id)
         .join(UserAccount, Assignment.user_id == UserAccount.id)
         .where(*date_filter)
         .distinct()
-    ).all()
+    )
+    if has_request_context() and current_user.is_external:
+        assignment_query = assignment_query.where(Assignment.user_id == current_user.id)
+    assignments = db.session.execute(assignment_query).all()
 
     now = datetime.now(timezone.utc)
     groups: dict[uuid.UUID, WorkSummaryGroup] = {}
