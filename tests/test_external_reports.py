@@ -65,7 +65,7 @@ def test_external_reports_filter_hidden_events(app, external_client, report_even
     with app.app_context():
         external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
         external_id = external.id
-        if kind == "user":
+        if kind in ("user", "work-summary"):
             event = db.session.get(Event, visible_id)
             db.session.add(Assignment(event=event, spot=event.spots[1], user_id=external_id))
             db.session.commit()
@@ -87,6 +87,25 @@ def test_external_reports_filter_hidden_events(app, external_client, report_even
     assert "Hidden full report event" not in text
     assert "Hidden draft report event" not in text
     assert "Hidden unrelated report event" not in text
+    if kind == "work-summary":
+        assert "External User" in text
+        assert "Report Crew" not in text
+
+
+@pytest.mark.parametrize("format", [None, "xlsx"])
+def test_external_work_summary_excludes_events_assigned_only_to_others(external_client, report_events, format):
+    now = datetime.now(timezone.utc)
+    dates = {
+        "from_date": (now - timedelta(days=60)).date().isoformat(),
+        "to_date": (now + timedelta(days=60)).date().isoformat(),
+    }
+    response = external_client.get(
+        "/reports/work-summary", query_string={**dates, **({"format": format} if format else {})}
+    )
+    assert response.status_code == 200
+    text = workbook_text(response) if format == "xlsx" else response.get_data(as_text=True)
+    assert "Visible report opportunity" not in text
+    assert "Report Crew" not in text
 
 
 @pytest.mark.parametrize("url", ["/reports/", "/reports/printout"])
