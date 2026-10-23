@@ -215,6 +215,18 @@ def test_external_equipment_controls_do_not_offer_other_user_actions(app, extern
     assert f'action="/equipment/items/{item_id}/return"'.encode() not in response.data
 
 
+@pytest.mark.parametrize("role", ["external", "member"])
+def test_master_event_links_follow_permissions(app, request, role):
+    client = request.getfixturevalue(f"{role}_client")
+    event_id, _ = make_opportunity(app)
+    with app.app_context():
+        master_event_id = db.session.get(Event, event_id).master_event_id
+    response = client.get(f"/events/{event_id}")
+    assert response.status_code == 200
+    for link in (b'href="/master-events/"', f'href="/master-events/{master_event_id}"'.encode()):
+        assert (link in response.data) is (role == "member")
+
+
 @pytest.mark.parametrize("url", ["/equipment/types/create", "/equipment/items/create"])
 def test_external_does_not_gain_equipment_administration(external_client, url):
     assert external_client.get(url).status_code == 403
