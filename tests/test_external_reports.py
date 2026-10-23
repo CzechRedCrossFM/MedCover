@@ -61,14 +61,21 @@ def workbook_text(response):
     ],
 )
 def test_external_reports_filter_hidden_events(app, external_client, report_events, kind, format):
-    _, me_id, member_id, _, _, _ = report_events
+    visible_id, me_id, _, _, _, _ = report_events
+    with app.app_context():
+        external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
+        external_id = external.id
+        if kind == "user":
+            event = db.session.get(Event, visible_id)
+            db.session.add(Assignment(event=event, spot=event.spots[1], user_id=external_id))
+            db.session.commit()
     now = datetime.now(timezone.utc)
     dates = {
         "from_date": (now - timedelta(days=60)).date().isoformat(),
         "to_date": (now + timedelta(days=60)).date().isoformat(),
     }
     urls = {
-        "user": f"/reports/user/{member_id}",
+        "user": f"/reports/user/{external_id}",
         "master": f"/reports/master-event/{me_id}",
         "range": "/reports/date-range",
         "work-summary": "/reports/work-summary",
@@ -213,6 +220,43 @@ def test_external_equipment_controls_do_not_offer_other_user_actions(app, extern
     assert b'id="issueItemModal"' not in response.data
     assert b"btn-open-issue" not in response.data
     assert f'action="/equipment/items/{item_id}/return"'.encode() not in response.data
+
+
+def test_external_report_index_does_not_offer_other_users(app, external_client, report_events):
+    member_id = report_events[2]
+    with app.app_context():
+        unrelated = _make_user("unrelated@test.com", "Hidden Directory User", Role.MEMBER)
+        unrelated_id = unrelated.id
+        external_id = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com")).id
+    response = external_client.get("/reports/")
+    assert response.status_code == 200
+    assert f'href="/reports/user/{external_id}"'.encode() in response.data
+    assert b'id="user-select-form"' not in response.data
+    assert str(member_id).encode() not in response.data
+    assert str(unrelated_id).encode() not in response.data
+    assert b"Hidden Directory User" not in response.data
+    assert b"Report Crew" not in response.data
+
+
+@pytest.mark.parametrize("format", [None, "csv"])
+@pytest.mark.parametrize("role", ["external", "member"])
+def test_other_user_reports_respect_external_boundary(app, request, report_events, role, format):
+    visible_id, _, member_id, _, _, _ = report_events
+    with app.app_context():
+        external = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "external@test.com"))
+        event = db.session.get(Event, visible_id)
+        db.session.add(Assignment(event=event, spot=event.spots[1], user_id=external.id))
+        db.session.commit()
+    if role == "member":
+        request.getfixturevalue("external_client").get("/auth/logout")
+    client = request.getfixturevalue(f"{role}_client")
+    with app.app_context():
+        expected_user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == f"{role}@test.com"))
+        expected_user_id = str(expected_user.id)
+    with client.session_transaction() as session:
+        assert session["_user_id"] == expected_user_id
+    response = client.get(f"/reports/user/{member_id}", query_string={"format": format} if format else {})
+    assert response.status_code == (403 if role == "external" else 200)
 
 
 @pytest.mark.parametrize("role", ["external", "member"])

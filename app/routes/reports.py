@@ -328,7 +328,7 @@ def _user_stat_csv_rows(user_stat_rows: list[tuple[UserAccount, UserStats]]) -> 
 def index() -> str:
     require_permission("report.view")
     master_events = active_master_events_list(current_user)
-    all_users = active_users_list() if current_user.has_permission("report.view") else []
+    all_users = [] if current_user.is_external else active_users_list()
     return render_template("reports/index.html", master_events=master_events, all_users=all_users)
 
 
@@ -345,7 +345,7 @@ def own_report() -> Response:
 @login_required
 def user_report(user_id: uuid.UUID) -> str | Response:
     is_own = str(user_id) == str(current_user.id)
-    if not is_own and not current_user.has_permission("report.view"):
+    if not is_own and (current_user.is_external or not current_user.has_permission("report.view")):
         abort(403)
 
     user: UserAccount | None = db.session.get(UserAccount, user_id)
