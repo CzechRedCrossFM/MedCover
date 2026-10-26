@@ -323,6 +323,7 @@ def index() -> str | Response:
     sort = request.args.get("sort", "name")
     sort_dir = request.args.get("dir", "asc")
     role_filter = request.args.get("role", "").strip()  # role name or "" for all
+    qualification_filter = request.args.get("qualification", "").strip()
     show_archived = request.args.get("archived") == "1"
     if show_archived and not current_user.has_permission("user.view_archived"):
         abort(403)
@@ -366,6 +367,12 @@ def index() -> str | Response:
             .join(Role, user_roles_table.c.role_id == Role.id)
             .where(Role.name == role_filter)
         )
+    if qualification_filter:
+        query = query.where(
+            UserAccount.qualifications.any(
+                sa.and_(Qualification.name == qualification_filter, Qualification.is_deleted == sa.false())
+            )
+        )
 
     total = db.session.scalar(db.select(db.func.count()).select_from(query.subquery()))
     total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
@@ -373,6 +380,11 @@ def index() -> str | Response:
         return redirect_resp
     users = db.session.scalars(query.offset((page - 1) * _PAGE_SIZE).limit(_PAGE_SIZE)).all()
     roles = db.session.scalars(db.select(Role).order_by(collate(Role.name, CS_COLLATION))).all()
+    qualifications = db.session.scalars(
+        db.select(Qualification)
+        .where(Qualification.is_deleted == sa.false())
+        .order_by(collate(Qualification.name, CS_COLLATION))
+    ).all()
     return render_template(
         "users/index.html",
         users=users,
@@ -384,6 +396,8 @@ def index() -> str | Response:
         sort=sort,
         sort_dir=sort_dir,
         role_filter=role_filter,
+        qualifications=qualifications,
+        qualification_filter=qualification_filter,
         show_archived=show_archived,
     )
 
