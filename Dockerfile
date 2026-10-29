@@ -28,4 +28,4 @@ COPY docker-entrypoint-scheduler.sh /docker-entrypoint-scheduler.sh
 RUN chmod +x /docker-entrypoint.sh /docker-entrypoint-scheduler.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]
+CMD ["sh", "-c", "gunicorn -w 2 --max-requests 500 --max-requests-jitter 50 --timeout 60 --keep-alive 5 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]
