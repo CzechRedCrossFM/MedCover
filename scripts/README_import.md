@@ -85,9 +85,9 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
   "version": 2,
   "users": [
     {
-      "gs_name":    "Vykydal Roman",
-      "name":       "Roman Vykydal",
-      "email":      "roman.vykydal@example.com",
+      "gs_name":    "Testovací Rudolf",
+      "name":       "Rudolf Testovací",
+      "email":      "rudolf.testovaci@example.com",
       "phone":      "+420 777 123 456",
       "zdravotnik": true
     }
@@ -100,11 +100,11 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
       "end_time":           "18:00",
       "location":           "Sportovní hala FM",
       "paid":               true,
-      "responsible_person": "Roman Vykydal",
-      "contact_person":     "Verlík Zdeněk 603 123 456",
-      "description":        "Typ: zdravotní dozor | Kontakt pořadatel: Verlík Zdeněk",
+      "responsible_person": "Rudolf Testovací",
+      "contact_person":     "Ukázkový Zdenko 603 123 456",
+      "description":        "Typ: zdravotní dozor | Kontakt pořadatel: Ukázkový Zdenko",
       "time_missing":       false,
-      "signups":            ["Adam Gajda", "Vladimír Kadlec"]
+      "signups":            ["Alfons Zkušební", "Viktor Fiktivní"]
     }
   ]
 }
@@ -116,7 +116,7 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
 
 | Field | Description |
 |---|---|
-| `gs_name` | Original name from the GS (e.g. `"Vykydal Roman"`) |
+| `gs_name` | Original name from the GS (e.g. `"Testovací Rudolf"`) |
 | `name` | Converted to *Firstname Lastname* order |
 | `email` | From the "Lidi" sheet (may be `null` if not found) |
 | `phone` | From the "Lidi" sheet (may be `null`) |
@@ -136,7 +136,7 @@ Used by the web app to create `Assignment` records automatically.
 | Situation | Behaviour |
 |---|---|
 | Event date before today | **Filtered out** |
-| Duplicate event names (same name, different dates) | Date appended: *"Vítání občánků 22.1."* |
+| Duplicate event names (same name, different dates) | Date appended: *"Slavnostní otevření hřiště 22.1."* |
 | Missing start time | `start_time: null`, `time_missing: true`, warning added to `description` |
 | Midnight end time (00:00) | Treated as "end not specified" → `end_time: null` |
 | Signups (col N+) | Extracted as list in `signups` — imported as `Assignment` records |
