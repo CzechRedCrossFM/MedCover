@@ -1125,7 +1125,7 @@ If the container fails to start, check available memory: MSSQL Express requires 
 
 ## Dev Data Seeding
 
-`scripts/seed_dev.py` creates a realistic dataset. Safe to run multiple times — idempotent.
+`scripts/seed_dev.py` creates a realistic synthetic dataset. Safe to run multiple times — idempotent.
 
 **Dev accounts** (password: `devpassword`, email format: `dev.<role>@medcover.local`):
 
@@ -1138,14 +1138,13 @@ If the container fails to start, check available memory: MSSQL Express requires 
 | Debrief Manager | `dev.debrief@medcover.local` | View/manage confidential debriefing records |
 | Inactive | `dev.inactive@medcover.local` | Registered but not yet activated |
 
-**Also seeded:**
-- All Roles, Permissions (synced to `ROLE_PERMISSIONS` in `role.py`)
-- Standard credential hierarchy (Záchranář, Zdravotník, Řidič, etc.)
-- 2 named Master Events + the default General ME
-- ~10 Events in various lifecycle states (planned, published, completed, cancelled)
-- Assignments, equipment types, personal and shared items
-- Completed events with DebriefingRecords
-- AppSettings (id=1, setup_complete=True)
+**Also seeded (synthetic, fictional):**
+- All Roles (synced to `ROLE_PERMISSIONS` in `role.py`), qualification hierarchy, 29 equipment types
+- 5 extra members (`@medcover.local`, same password) so every qualification is held by someone, 4 master events, 3 templates
+- ~200 rule-based (condition-staffed) events spread around the run date (about a third in the past, the rest up to ~8 months ahead) with assignments, equipment and debriefings; dates are computed from today, so the data stays current whenever it is generated
+- AppSettings (id=1, setup_complete=True, `dev_email_block` on)
+
+Reference data is get-or-create on every run. The event dataset is generated only when the database has no events, so re-running never duplicates or shifts anything. To regenerate it, recreate the database.
 
 **After changing role permissions in `role.py`,** re-run the seeder to sync:
 
@@ -1156,6 +1155,17 @@ docker compose exec web python scripts/seed_dev.py
 Or on the test server:
 ```bash
 ssh <user>@<host> "cd /path/to/MedCover && docker compose exec web python scripts/seed_dev.py"
+```
+
+### Recreating the DEV stack
+
+To start from a clean database (and drop any other copies of old data), recreate the stack with fresh volumes from the checkout the DEV containers are bound to:
+
+```bash
+docker compose down -v
+docker compose up --build -d
+docker compose exec web flask db upgrade
+docker compose exec web python scripts/seed_dev.py
 ```
 
 ---
