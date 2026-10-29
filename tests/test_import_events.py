@@ -44,21 +44,21 @@ _script = _import_script()
 
 class TestReverseNameHelper:
     def test_two_part_name(self):
-        assert _script._reverse_name("Balhar Lumír") == "Lumír Balhar"
+        assert _script._reverse_name("Příkladný Ludvík") == "Ludvík Příkladný"
 
     def test_three_part_name(self):
-        assert _script._reverse_name("Svobodová K. Zuzana") == "K. Zuzana Svobodová"
+        assert _script._reverse_name("Vzorová K. Eliška") == "K. Eliška Vzorová"
 
     def test_single_part_unchanged(self):
-        assert _script._reverse_name("Novák") == "Novák"
+        assert _script._reverse_name("Příklad") == "Příklad"
 
     def test_strips_whitespace(self):
-        assert _script._reverse_name("  Gajda  Adam  ") == "Adam Gajda"
+        assert _script._reverse_name("  Zkušební  Alfons  ") == "Alfons Zkušební"
 
 
 class TestIsValidNameHelper:
     def test_valid_names(self):
-        assert _script._is_valid_name("Adam Gajda")
+        assert _script._is_valid_name("Alfons Zkušební")
         assert _script._is_valid_name("X")
 
     def test_junk_strings(self):
@@ -112,13 +112,13 @@ class TestBuildDescription:
         result = _script._build_description(
             vehicle="Sanitka",
             event_type="zdravotní dozor",
-            contact="Jan Novák 123",
+            contact="Jiří Příklad 123",
             signups=["Petr", "Marie"],
             time_missing=False,
         )
         assert "Typ: zdravotní dozor" in result
         assert "Vozidlo/stan: Sanitka" in result
-        assert "Kontakt pořadatel: Jan Novák 123" in result
+        assert "Kontakt pořadatel: Jiří Příklad 123" in result
         assert "Přihlášení (import z GS): Petr, Marie" in result
 
     def test_time_missing_warning(self):
@@ -212,7 +212,7 @@ class TestValidateRow:
                 **self.BASE,
                 "location": "  Praha  ",
                 "paid": True,
-                "responsible_person": " Jan Novák ",
+                "responsible_person": " Jiří Příklad ",
                 "contact_person": "  ",
             },
             0,
@@ -221,7 +221,7 @@ class TestValidateRow:
         assert row is not None
         assert row["location"] == "Praha"
         assert row["paid"] is True
-        assert row["responsible_person"] == "Jan Novák"
+        assert row["responsible_person"] == "Jiří Příklad"
         assert row["contact_person"] is None  # blank string → None
 
 
@@ -236,41 +236,41 @@ class TestMatchResponsiblePerson:
         return [self._FakeUser(n) for n in names]
 
     def test_empty_input_returns_none(self):
-        u, c = _match_responsible_person("", self._users("Jan Novák"))
+        u, c = _match_responsible_person("", self._users("Jiří Příklad"))
         assert u is None and c == "none"
 
     def test_whitespace_only_returns_none(self):
-        u, c = _match_responsible_person("   ", self._users("Jan Novák"))
+        u, c = _match_responsible_person("   ", self._users("Jiří Příklad"))
         assert u is None and c == "none"
 
     def test_exact_match(self):
-        users = self._users("Jan Novák", "Petr Svědík")
-        u, c = _match_responsible_person("Jan Novák", users)
+        users = self._users("Jiří Příklad", "Pavel Zástupný")
+        u, c = _match_responsible_person("Jiří Příklad", users)
         assert u is users[0] and c == "exact"
 
     def test_case_insensitive_match(self):
-        users = self._users("Jan Novák")
-        u, c = _match_responsible_person("JAN novÁk", users)
+        users = self._users("Jiří Příklad")
+        u, c = _match_responsible_person("JIŘÍ příKLAD", users)
         assert u is users[0] and c == "iexact"
 
     def test_reversed_match_exact_case(self):
-        users = self._users("Jan Novák")
-        u, c = _match_responsible_person("Novák Jan", users)
+        users = self._users("Jiří Příklad")
+        u, c = _match_responsible_person("Příklad Jiří", users)
         assert u is users[0] and c == "reversed"
 
     def test_reversed_match_case_insensitive(self):
-        users = self._users("Jan Novák")
-        u, c = _match_responsible_person("novÁK jan", users)
+        users = self._users("Jiří Příklad")
+        u, c = _match_responsible_person("příKLAD jiŘÍ", users)
         assert u is users[0] and c == "reversed"
 
     def test_no_match(self):
-        users = self._users("Jan Novák")
+        users = self._users("Jiří Příklad")
         u, c = _match_responsible_person("Kdosi Neznámý", users)
         assert u is None and c == "none"
 
     def test_three_word_name_does_not_reverse(self):
-        users = self._users("Jan Karel Novák")
-        u, c = _match_responsible_person("Novák Karel Jan", users)
+        users = self._users("Jiří Karel Příklad")
+        u, c = _match_responsible_person("Příklad Karel Jiří", users)
         assert u is None and c == "none"
 
 
@@ -356,7 +356,7 @@ class TestExtractFunction:
         wb = openpyxl.load_workbook(str(fixture), data_only=True)
         events = _script.extract(wb)
         first = events[0]
-        assert first["responsible_person"] == "Novák Jan"
+        assert first["responsible_person"] == "Příklad Jiří"
 
     def test_signups_extracted(self):
         fixture = Path(__file__).parent / "fixtures" / "test_import.xlsx"
@@ -417,8 +417,8 @@ class TestLoadLidiLookup:
         lookup = _script._load_lidi_lookup(wb)
         assert len(lookup) > 0
         # Check a known entry
-        assert "Kratochvíl Tomáš" in lookup
-        info = lookup["Kratochvíl Tomáš"]
+        assert "Vzorný Tadeáš" in lookup
+        info = lookup["Vzorný Tadeáš"]
         assert info["is_zdravotnik"] is True
         assert info["is_ridic"] is True
 
@@ -426,9 +426,9 @@ class TestLoadLidiLookup:
         fixture = Path(__file__).parent / "fixtures" / "test_import.xlsx"
         wb = openpyxl.load_workbook(str(fixture), data_only=True)
         lookup = _script._load_lidi_lookup(wb)
-        # Svoboda Petr: zdravotník=False, ridic=False
-        assert "Svoboda Petr" in lookup
-        assert lookup["Svoboda Petr"]["is_ridic"] is False
+        # Testovací Patrik: zdravotník=False, ridic=False
+        assert "Testovací Patrik" in lookup
+        assert lookup["Testovací Patrik"]["is_ridic"] is False
 
 
 class TestMainCli:
@@ -615,9 +615,9 @@ class TestImportPreview:
             "version": 2,
             "users": [
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons@test.com",
                     "phone": "123",
                     "is_zdravotnik": False,
                 }
@@ -629,19 +629,19 @@ class TestImportPreview:
             data={"json_data": json.dumps(payload), "csrf_token": csrf},
         )
         assert resp.status_code == 200
-        assert b"Adam Gajda" in resp.data
+        assert "Alfons Zkušební".encode() in resp.data
         assert "Nový".encode() in resp.data
 
     def test_marks_existing_user_by_name(self, app, admin_client):
-        _make_user(app, "Adam Gajda", "adam_existing@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons_existing@test.com")
         csrf = _get_csrf(admin_client, "/import/events/")
         payload = {
             "version": 2,
             "users": [
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam_new@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons_new@test.com",
                     "phone": None,
                     "is_zdravotnik": False,
                 }
@@ -656,15 +656,15 @@ class TestImportPreview:
         assert b"Existuje" in resp.data
 
     def test_marks_existing_user_by_email(self, app, admin_client):
-        _make_user(app, "Different Name", "adam@test.com")
+        _make_user(app, "Different Name", "alfons@test.com")
         csrf = _get_csrf(admin_client, "/import/events/")
         payload = {
             "version": 2,
             "users": [
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons@test.com",
                     "phone": None,
                     "is_zdravotnik": False,
                 }
@@ -746,10 +746,10 @@ class TestImportPreview:
 
     def test_approximate_rp_match_shows_warning(self, app, admin_client):
         _make_master_event(app)
-        _make_user(app, "Jan Novák", "jn@test.com")
+        _make_user(app, "Jiří Příklad", "jp@test.com")
         csrf = _get_csrf(admin_client, "/import/events/")
         row = _minimal_event(name="Reversed ZO")
-        row["responsible_person"] = "Novák Jan"  # reversed order → approximate match
+        row["responsible_person"] = "Příklad Jiří"  # reversed order → approximate match
         resp = admin_client.post(
             "/import/events/preview",
             data={"json_data": json.dumps([row]), "csrf_token": csrf},
@@ -797,9 +797,9 @@ class TestImportConfirmUsers:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam_new@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons_new@test.com",
                     "phone": "123",
                     "is_zdravotnik": False,
                 }
@@ -808,7 +808,7 @@ class TestImportConfirmUsers:
         )
         assert resp.status_code == 302
         with app.app_context():
-            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "adam_new@test.com"))
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "alfons_new@test.com"))
             assert user is not None
             assert user.is_active is True
             assert any(r.name == "Member" for r in user.roles)
@@ -826,9 +826,9 @@ class TestImportConfirmUsers:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Novák Jan",
-                    "name": "Jan Novák",
-                    "email": "jan@test.com",
+                    "gs_name": "Příklad Jiří",
+                    "name": "Jiří Příklad",
+                    "email": "jiri@test.com",
                     "phone": "",
                     "is_zdravotnik": True,
                 }
@@ -837,12 +837,12 @@ class TestImportConfirmUsers:
         )
         assert resp.status_code == 302
         with app.app_context():
-            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "jan@test.com"))
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "jiri@test.com"))
             assert user is not None
             assert any("zdravotník" in q.name.lower() for q in user.qualifications)
 
     def test_skips_user_matching_by_name(self, app, admin_client):
-        _make_user(app, "Adam Gajda", "adam_orig@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons_orig@test.com")
         me_id = _make_master_event(app)
         resp = _post_confirm(
             app,
@@ -850,9 +850,9 @@ class TestImportConfirmUsers:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam_new@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons_new@test.com",
                     "phone": "",
                     "is_zdravotnik": False,
                 }
@@ -861,11 +861,11 @@ class TestImportConfirmUsers:
         )
         assert resp.status_code == 302
         with app.app_context():
-            count = db.session.scalar(db.select(db.func.count()).where(UserAccount.name == "Adam Gajda"))
+            count = db.session.scalar(db.select(db.func.count()).where(UserAccount.name == "Alfons Zkušební"))
             assert count == 1  # not duplicated
 
     def test_skips_user_matching_by_email(self, app, admin_client):
-        _make_user(app, "Different Name", "adam@test.com")
+        _make_user(app, "Different Name", "alfons@test.com")
         me_id = _make_master_event(app)
         resp = _post_confirm(
             app,
@@ -873,9 +873,9 @@ class TestImportConfirmUsers:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons@test.com",
                     "phone": "",
                     "is_zdravotnik": False,
                 }
@@ -884,7 +884,7 @@ class TestImportConfirmUsers:
         )
         assert resp.status_code == 302
         with app.app_context():
-            count = db.session.scalar(db.select(db.func.count()).where(UserAccount.email == "adam@test.com"))
+            count = db.session.scalar(db.select(db.func.count()).where(UserAccount.email == "alfons@test.com"))
             assert count == 1
 
     def test_skips_user_without_email(self, app, admin_client):
@@ -949,9 +949,9 @@ class TestImportConfirmSpots:
     def test_standard_3_spots_with_1_signup(self, app, admin_client):
         """1 signup ≤ 3 → still standard 3-spot pattern."""
         me_id = _make_master_event(app)
-        _make_user(app, "Adam Gajda", "adam@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons@test.com")
         ev = _minimal_event()
-        ev["signups"] = ["Adam Gajda"]
+        ev["signups"] = ["Alfons Zkušební"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1006,7 +1006,7 @@ class TestImportCancelledEvents:
         me_id = _make_master_event(app)
         ev = _minimal_event(name="Zrušená bez pozic")
         ev["cancelled"] = True
-        ev["signups"] = ["Novák Jan"]
+        ev["signups"] = ["Příklad Jiří"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1043,7 +1043,7 @@ class TestImportCancelledEvents:
 class TestImportConfirmAssignments:
     def test_rp_assigned_to_zdravotnik_spot(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp@test.com")
 
         ev = _minimal_event(name="RP Event")
         ev["responsible_person_id"] = rp_id
@@ -1059,11 +1059,11 @@ class TestImportConfirmAssignments:
 
     def test_signups_assigned_to_zelenac_spots(self, app, admin_client):
         me_id = _make_master_event(app)
-        _make_user(app, "Adam Gajda", "adam@test.com")
-        _make_user(app, "Marek Skyba", "marek@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons@test.com")
+        _make_user(app, "Matěj Vzorový", "matej@test.com")
 
         ev = _minimal_event(name="Signup Event")
-        ev["signups"] = ["Adam Gajda", "Marek Skyba"]
+        ev["signups"] = ["Alfons Zkušební", "Matěj Vzorový"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1089,16 +1089,16 @@ class TestImportConfirmAssignments:
         """A user created in the same import can be assigned to an event signup."""
         me_id = _make_master_event(app)
         ev = _minimal_event(name="New User Event")
-        ev["signups"] = ["Adam Gajda"]
+        ev["signups"] = ["Alfons Zkušební"]
         resp = _post_confirm(
             app,
             admin_client,
             events=[ev],
             users=[
                 {
-                    "gs_name": "Gajda Adam",
-                    "name": "Adam Gajda",
-                    "email": "adam@test.com",
+                    "gs_name": "Zkušební Alfons",
+                    "name": "Alfons Zkušební",
+                    "email": "alfons@test.com",
                     "phone": "",
                     "is_zdravotnik": False,
                 }
@@ -1110,13 +1110,13 @@ class TestImportConfirmAssignments:
             event = db.session.scalar(db.select(Event).where(Event.name == "New User Event"))
             assert event is not None
             assigned_names = [s.assignment.user.name for s in event.spots if s.assignment is not None]
-            assert "Adam Gajda" in assigned_names
+            assert "Alfons Zkušební" in assigned_names
 
     def test_past_event_gets_auto_debriefing(self, app, admin_client):
         """Past events (end < now) should automatically receive DebriefingRecord rows."""
 
         me_id = _make_master_event(app)
-        uid = _make_user(app, "Eva Nováková", "eva@test.com")
+        uid = _make_user(app, "Eliška Příkladová", "eliska@test.com")
         ev = _minimal_event(name="Past Event Debrief", date="2020-01-15")
         ev["responsible_person_id"] = uid
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
@@ -1172,9 +1172,9 @@ class TestImportIdempotency:
         me_id = _make_master_event(app)
         user_payload = [
             {
-                "gs_name": "Novák Jan",
-                "name": "Novák Jan",
-                "email": "jan@test.com",
+                "gs_name": "Příklad Jiří",
+                "name": "Příklad Jiří",
+                "email": "jiri@test.com",
                 "phone": None,
                 "is_zdravotnik": False,
             }
@@ -1189,19 +1189,19 @@ class TestImportIdempotency:
             count = db.session.scalar(
                 db.select(db.func.count())
                 .select_from(UserAccount)
-                .where(db.func.lower(UserAccount.name) == "novák jan")
+                .where(db.func.lower(UserAccount.name) == "příklad jiří")
             )
             assert count == 1
 
     def test_rerun_does_not_duplicate_user_by_email(self, app, admin_client):
         """If a user already exists with the same email, it must not be re-created."""
         me_id = _make_master_event(app)
-        _make_user(app, "Petra Horáková", "petra@test.com")
+        _make_user(app, "Pavla Ukázková", "pavla@test.com")
         user_payload = [
             {
-                "gs_name": "Horáková Petra",
-                "name": "Petra Horáková NEW",
-                "email": "petra@test.com",
+                "gs_name": "Ukázková Pavla",
+                "name": "Pavla Ukázková NEW",
+                "email": "pavla@test.com",
                 "phone": None,
                 "is_zdravotnik": False,
             }
@@ -1211,7 +1211,7 @@ class TestImportIdempotency:
 
         with app.app_context():
             count = db.session.scalar(
-                db.select(db.func.count()).select_from(UserAccount).where(UserAccount.email == "petra@test.com")
+                db.select(db.func.count()).select_from(UserAccount).where(UserAccount.email == "pavla@test.com")
             )
             assert count == 1  # not duplicated despite different name in payload
 
@@ -1255,15 +1255,15 @@ class TestImportScriptIsRidic:
         wb = openpyxl.load_workbook(str(fixture), data_only=True)
         users = _script.extract_users(wb)
         by_name = {u["name"]: u for u in users}
-        # Kratochvíl Tomáš: zdravotník=True, ridic=True
-        assert by_name["Kratochvíl Tomáš"]["is_zdravotnik"] is True
-        assert by_name["Kratochvíl Tomáš"]["is_ridic"] is True
-        # Svoboda Petr: zdravotník=False, ridic=False
-        assert by_name["Svoboda Petr"]["is_zdravotnik"] is False
-        assert by_name["Svoboda Petr"]["is_ridic"] is False
-        # Horáková Marie: zdravotník=False, ridic=True
-        assert by_name["Horáková Marie"]["is_zdravotnik"] is False
-        assert by_name["Horáková Marie"]["is_ridic"] is True
+        # Vzorný Tadeáš: zdravotník=True, ridic=True
+        assert by_name["Vzorný Tadeáš"]["is_zdravotnik"] is True
+        assert by_name["Vzorný Tadeáš"]["is_ridic"] is True
+        # Testovací Patrik: zdravotník=False, ridic=False
+        assert by_name["Testovací Patrik"]["is_zdravotnik"] is False
+        assert by_name["Testovací Patrik"]["is_ridic"] is False
+        # Ukázková Marta: zdravotník=False, ridic=True
+        assert by_name["Ukázková Marta"]["is_zdravotnik"] is False
+        assert by_name["Ukázková Marta"]["is_ridic"] is True
 
     def test_extract_users_ridic_false_by_default_when_not_in_lidi(self):
         """Person not in Lidi gets is_ridic=False."""
@@ -1272,8 +1272,8 @@ class TestImportScriptIsRidic:
         wb = openpyxl.load_workbook(str(fixture), data_only=True)
         users = _script.extract_users(wb)
         by_name = {u["name"]: u for u in users}
-        # Pokorný Zdeněk is only in Dozory, not in Lidi
-        assert by_name["Pokorný Zdeněk"]["is_ridic"] is False
+        # Fiktivní Zbyněk is only in Dozory, not in Lidi
+        assert by_name["Fiktivní Zbyněk"]["is_ridic"] is False
 
 
 class TestImportConfirmRidic:
@@ -1290,9 +1290,9 @@ class TestImportConfirmRidic:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Horáková Marie",
-                    "name": "Marie Horáková",
-                    "email": "marie@test.com",
+                    "gs_name": "Ukázková Marta",
+                    "name": "Marta Ukázková",
+                    "email": "marta@test.com",
                     "phone": "",
                     "is_zdravotnik": False,
                     "is_ridic": True,
@@ -1302,7 +1302,7 @@ class TestImportConfirmRidic:
         )
         assert resp.status_code == 302
         with app.app_context():
-            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "marie@test.com"))
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "marta@test.com"))
             assert user is not None
             qual_names = {q.name for q in user.qualifications}
             assert "Řidič sanitky" in qual_names
@@ -1322,9 +1322,9 @@ class TestImportConfirmRidic:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Kratochvíl Tomáš",
-                    "name": "Tomáš Kratochvíl",
-                    "email": "tomas@test.com",
+                    "gs_name": "Vzorný Tadeáš",
+                    "name": "Tadeáš Vzorný",
+                    "email": "tadeas@test.com",
                     "phone": "",
                     "is_zdravotnik": True,
                     "is_ridic": True,
@@ -1334,7 +1334,7 @@ class TestImportConfirmRidic:
         )
         assert resp.status_code == 302
         with app.app_context():
-            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "tomas@test.com"))
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "tadeas@test.com"))
             assert user is not None
             qual_names = {q.name for q in user.qualifications}
             assert "Zdravotník" in qual_names
@@ -1349,9 +1349,9 @@ class TestImportConfirmRidic:
             events=[_minimal_event()],
             users=[
                 {
-                    "gs_name": "Svoboda Petr",
-                    "name": "Petr Svoboda",
-                    "email": "petr@test.com",
+                    "gs_name": "Testovací Patrik",
+                    "name": "Patrik Testovací",
+                    "email": "patrik@test.com",
                     "phone": "",
                     "is_zdravotnik": False,
                     "is_ridic": False,
@@ -1361,7 +1361,7 @@ class TestImportConfirmRidic:
         )
         assert resp.status_code == 302
         with app.app_context():
-            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "petr@test.com"))
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "patrik@test.com"))
             assert user is not None
             qual_names = {q.name for q in user.qualifications}
             assert "Zelenáč" in qual_names
@@ -1486,9 +1486,9 @@ class TestImportPreviewRidic:
             "version": 2,
             "users": [
                 {
-                    "gs_name": "Horáková Marie",
-                    "name": "Marie Horáková",
-                    "email": "marie@test.com",
+                    "gs_name": "Ukázková Marta",
+                    "name": "Marta Ukázková",
+                    "email": "marta@test.com",
                     "phone": None,
                     "is_zdravotnik": False,
                     "is_ridic": True,
@@ -1539,16 +1539,16 @@ class TestImportPreviewRidic:
 class TestImportAutoClose:
     def test_fully_occupied_future_event_gets_assignments_closed(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp@test.com")
-        _make_user(app, "Adam Gajda", "adam@test.com")
-        _make_user(app, "Bara Nová", "bara@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons@test.com")
+        _make_user(app, "Bára Zkušební", "bara2@test.com")
 
         # Standard 3-spot pattern: 2 mandatory + 1 optional. RP fills
         # Zdravotník (mandatory), two signups fill both Zelenáč spots
         # (mandatory + optional) — the event is now fully occupied.
         ev = _minimal_event(name="Plně obsazená akce")
         ev["responsible_person_id"] = rp_id
-        ev["signups"] = ["Adam Gajda", "Bara Nová"]
+        ev["signups"] = ["Alfons Zkušební", "Bára Zkušební"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1560,14 +1560,14 @@ class TestImportAutoClose:
         """When only mandatory spots are filled but an optional spot is still free,
         assignments must remain open (event starts as DRAFT after import)."""
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp_mand@test.com")
-        _make_user(app, "Adam Gajda", "adam_mand@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp_mand@test.com")
+        _make_user(app, "Alfons Zkušební", "alfons_mand@test.com")
 
         # RP + 1 signup → total_people <= 3 → 2 mandatory + 1 optional Zelenáč.
         # Both mandatory are filled, the optional Zelenáč stays empty.
         ev = _minimal_event(name="Mandatórní plná, volitelná volná")
         ev["responsible_person_id"] = rp_id
-        ev["signups"] = ["Adam Gajda"]
+        ev["signups"] = ["Alfons Zkušební"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1579,7 +1579,7 @@ class TestImportAutoClose:
 
     def test_partially_filled_future_event_stays_draft(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp2@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp2@test.com")
 
         ev = _minimal_event(name="Částečně obsazená akce")
         ev["responsible_person_id"] = rp_id
@@ -1603,12 +1603,12 @@ class TestImportAutoClose:
 
     def test_fully_occupied_past_event_stays_completed(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Eva Nováková", "eva2@test.com")
-        _make_user(app, "Petr Novák", "petr2@test.com")
+        rp_id = _make_user(app, "Eliška Příkladová", "eliska2@test.com")
+        _make_user(app, "Pavel Příklad", "pavel2@test.com")
 
         ev = _minimal_event(name="Historická plná akce", date="2020-01-15")
         ev["responsible_person_id"] = rp_id
-        ev["signups"] = ["Petr Novák"]
+        ev["signups"] = ["Pavel Příklad"]
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
@@ -1618,7 +1618,7 @@ class TestImportAutoClose:
 
     def test_fully_occupied_dynamic_spots_future_event_gets_assignments_closed(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp3@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp3@test.com")
         signup_names = [f"User{k} Big" for k in range(4)]
         for k in range(4):
             _make_user(app, f"User{k} Big", f"user_big{k}@test.com")
@@ -1635,7 +1635,7 @@ class TestImportAutoClose:
 
     def test_unknown_signup_leaves_event_draft(self, app, admin_client):
         me_id = _make_master_event(app)
-        rp_id = _make_user(app, "Roman Vykydal", "rp4@test.com")
+        rp_id = _make_user(app, "Rudolf Testovací", "rp4@test.com")
 
         ev = _minimal_event(name="Neznámý přihlášený")
         ev["responsible_person_id"] = rp_id
@@ -1736,16 +1736,16 @@ class TestImportConfirmErrorPaths:
     def test_rp_by_name_lookup_matches_existing_user(self, app, admin_client):
         """responsible_person_id with 'name:...' prefix resolves via the built name map."""
         me_id = _make_master_event(app)
-        _make_user(app, "Jan Novák", "jan@test.com")
+        _make_user(app, "Jiří Příklad", "jiri@test.com")
         ev = _minimal_event(name="RP by name")
-        ev["responsible_person_id"] = "name:Jan Novák"
+        ev["responsible_person_id"] = "name:Jiří Příklad"
         resp = _post_confirm(app, admin_client, events=[ev], master_event_id=me_id)
         assert resp.status_code == 302
         with app.app_context():
             event = db.session.scalar(db.select(Event).where(Event.name == "RP by name"))
             assert event is not None
             assert event.responsible_person is not None
-            assert event.responsible_person.name == "Jan Novák"
+            assert event.responsible_person.name == "Jiří Příklad"
 
     def test_rp_by_name_unknown_leaves_rp_empty(self, app, admin_client):
         """Unknown name in 'name:...' prefix yields no RP, no crash."""

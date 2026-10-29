@@ -74,7 +74,7 @@ Output JSON schema (v2):
 
 Notes
 -----
-- Duplicate event names get the date appended: "Vítání občánků 22.1."
+- Duplicate event names get the date appended: "Slavnostní otevření hřiště 22.1."
 - Names are kept in GS "Lastname Firstname" format (Czech convention).
 - Users are extracted from all names in Dozory (cols M+N+) cross-referenced with Lidi.
 - People not found in Lidi will have null email and phone — email must be filled manually.
@@ -112,8 +112,8 @@ def _reverse_name(gs_name: str) -> str:
     """Convert 'Lastname Firstname [Middle]' (GS format) to 'Firstname [Middle] Lastname'.
 
     Examples:
-        "Balhar Lumír"        → "Lumír Balhar"
-        "Svobodová K. Zuzana" → "K. Zuzana Svobodová"
+        "Příkladný Ludvík"        → "Ludvík Příkladný"
+        "Vzorová K. Eliška" → "K. Eliška Vzorová"
     """
     parts = gs_name.strip().split(None, 1)
     if len(parts) == 2:
