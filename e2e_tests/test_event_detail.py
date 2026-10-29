@@ -25,7 +25,7 @@ def test_event_detail_renders_sections(logged_in_page, base_url):
     # Core sections should be present
     body = page.locator("body").inner_text()
     assert "Termín" in body, "Missing 'Termín' section"
-    assert "Pozice" in body, "Missing 'Pozice' section"
+    assert "Podmínky obsazení" in body, "Missing 'Podmínky obsazení' section"
 
 
 def test_event_detail_has_action_buttons(logged_in_page, base_url):
