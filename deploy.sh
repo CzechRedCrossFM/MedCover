@@ -2,7 +2,7 @@
 # deploy.sh — pull latest code and redeploy the production stack
 #
 # Prerequisites on the server:
-#   - Git repo cloned (git clone git@github.com:spidermila/MedCover.git)
+#   - Git repo cloned (git clone git@github.com:CzechRedCrossFM/MedCover.git)
 #   - .env.prod file created from .env.prod.example and filled in
 #   - Docker and Docker Compose plugin installed
 #
