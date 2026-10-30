@@ -414,7 +414,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
         - Vanilla JS / jQuery is sufficient for the required interactivity (form enhancements, dynamic notifications); calendar views are handled by FullCalendar (see AD08)
         - This stack is well-supported on all considered hosting platforms
     - Notes
-        - The application was initially developed with PostgreSQL 17. PostgreSQL was replaced by MSSQL in [PR #381](https://github.com/spidermila/MedCover/pull/381) to align with Azure SQL Database on the target hosting platform.
+        - The application was initially developed with PostgreSQL 17. PostgreSQL was replaced by MSSQL in [PR #381](https://github.com/CzechRedCrossFM/MedCover/pull/381) to align with Azure SQL Database on the target hosting platform.
     - Implications
         - REST API: can be added later using Flask blueprints without major architectural changes (auth mechanism TBD when REST API is scoped)
         - ORM: SQLAlchemy (supports MSSQL via the `mssql+pyodbc` dialect)
