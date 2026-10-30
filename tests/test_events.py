@@ -3,6 +3,7 @@
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 import pytest
 
@@ -523,6 +524,52 @@ class TestEventCreate:
 
 
 class TestEventDetail:
+    @pytest.mark.parametrize(
+        "url,href",
+        [
+            ("https://example.com/info?x=1&y=2", "https://example.com/info?x=1&y=2"),
+            ("http://example.com/info", "http://example.com/info"),
+            ("www.example.com/info", "https://www.example.com/info"),
+        ],
+    )
+    def test_description_links_open_in_new_tab_and_escape_html(self, app, admin_client, url, href):
+        event_id, _ = _make_event_with_spot(app)
+        with app.app_context():
+            db.session.get(Event, event_id).description = (
+                f"Podrobnosti ({url}). <script>alert(1)</script> javascript:alert(2)"
+            )
+            db.session.commit()
+        response = admin_client.get(f"/events/{event_id}")
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        link = re.search(r'<a\b[^>]*href="' + re.escape(escape(href)) + r'"[^>]*>', html)
+        assert link is not None
+        assert 'target="_blank"' in link.group()
+        assert 'rel="noopener noreferrer"' in link.group()
+        assert escape("<script>alert(1)</script>") in html
+        assert "<script>alert(1)</script>" not in html
+        assert 'href="javascript:' not in html
+
+    @pytest.mark.parametrize("before,after", [("(", ""), ("", ".")], ids=["punctuation-before", "punctuation-after"])
+    def test_description_link_excludes_adjacent_punctuation(self, app, admin_client, before, after):
+        url = "https://example.com/info"
+        event_id, _ = _make_event_with_spot(app)
+        with app.app_context():
+            db.session.get(Event, event_id).description = f"Podrobnosti {before}{url}{after}"
+            db.session.commit()
+        response = admin_client.get(f"/events/{event_id}")
+        assert response.status_code == 200
+        pattern = (
+            re.escape(before)
+            + r'<a\b[^>]*href="'
+            + re.escape(url)
+            + r'"[^>]*>'
+            + re.escape(url)
+            + r"</a>"
+            + re.escape(after)
+        )
+        assert re.search(pattern, response.get_data(as_text=True))
+
     def test_event_detail_loads(self, app, admin_client):
         me_id = _make_master_event(app)
         rp_qual_id = _make_rp_qual(app)

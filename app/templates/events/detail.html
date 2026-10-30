@@ -244,7 +244,7 @@
 </div>
 
 {% if event.description %}
-  <p class="text-muted">{{ event.description }}</p>
+  <p class="text-muted">{{ event.description | urlize(target='_blank', rel='noopener noreferrer') }}</p>
 {% endif %}
 
 {% if event.staffing_mode == 'CONDITIONS' %}
