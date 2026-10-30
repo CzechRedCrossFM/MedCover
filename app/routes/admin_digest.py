@@ -1,6 +1,5 @@
 """Admin digest configuration, preview and send routes."""
 
-import html
 import logging
 from typing import Any
 
@@ -291,17 +290,14 @@ def reorder_blocks() -> dict[str, bool]:
 def preview() -> Response:
     _require_digest_perm()
 
-    digest_html = render_digest(db.session)
-    # Sandbox the digest content in an iframe to prevent XSS from admin-controlled
-    # free_text / header_html / footer_html fields executing in the browser context.
-    escaped = html.escape(digest_html, quote=True)
-    wrapper = (
-        '<!DOCTYPE html><html><body style="margin:0">'
-        f'<iframe srcdoc="{escaped}"'
-        ' style="width:100%;height:100vh;border:none;" sandbox></iframe>'
-        "</body></html>"
+    # Served raw with its own CSP: the global policy would block the digest's inline
+    # styles. The CSP sandbox (no allow-* tokens) replaces the old iframe sandbox and
+    # stops admin-controlled free_text / header_html / footer_html from running scripts.
+    response = Response(render_digest(db.session), content_type="text/html; charset=utf-8")
+    response.headers["Content-Security-Policy"] = (
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:"
     )
-    return Response(wrapper, content_type="text/html; charset=utf-8")
+    return response
 
 
 # ── Send test ─────────────────────────────────────────────────────────────────

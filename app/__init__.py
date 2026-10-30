@@ -296,13 +296,14 @@ def create_app(
         """Add Content-Security-Policy and other security headers."""
         if not app.config.get("TESTING") and not app.config.get("DEBUG"):
             nonce = getattr(g, "csp_nonce", "")
-            response.headers["Content-Security-Policy"] = (
+            response.headers.setdefault(
+                "Content-Security-Policy",
                 "default-src 'self'; "
                 f"script-src 'self' https://cdn.jsdelivr.net 'nonce-{nonce}'; "
                 f"style-src 'self' https://cdn.jsdelivr.net 'nonce-{nonce}'; "
                 "font-src 'self' https://cdn.jsdelivr.net data:; "
                 "img-src 'self' data:; "
-                "connect-src 'self' https://cdn.jsdelivr.net;"
+                "connect-src 'self' https://cdn.jsdelivr.net;",
             )
             response.headers.setdefault(
                 "Strict-Transport-Security",

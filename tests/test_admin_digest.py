@@ -239,6 +239,26 @@ def test_digest_preview_returns_html(app: object, admin_client: object) -> None:
     assert b"<!DOCTYPE html>" in resp.data
 
 
+def test_digest_preview_has_own_csp_and_raw_body(app: object, admin_client: object) -> None:
+    """Preview serves the raw digest under its own sandboxed CSP, not the global nonce policy."""
+    _seed_schedule(app)
+    orig = (app.config.get("TESTING"), app.config.get("DEBUG"))
+    app.config["TESTING"] = False
+    app.config["DEBUG"] = False
+    try:
+        resp = admin_client.get("/admin/digest/preview")
+        other = admin_client.get("/health")
+    finally:
+        app.config["TESTING"], app.config["DEBUG"] = orig
+
+    assert resp.status_code == 200
+    assert resp.headers["Content-Security-Policy"] == (
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:"
+    )
+    assert b"<iframe" not in resp.data and b"srcdoc" not in resp.data
+    assert "nonce-" in other.headers["Content-Security-Policy"]
+
+
 def test_digest_settings_page_ok(app: object, admin_client: object) -> None:
     """GET /admin/digest/ should return 200."""
     with app.app_context():
@@ -278,6 +298,12 @@ def test_digest_save_persists(app: object, admin_client: object) -> None:
 def test_digest_requires_permission(app: object, member_client: object) -> None:
     """Non-admin user should get 403 on digest routes."""
     resp = member_client.get("/admin/digest/")
+    assert resp.status_code == 403
+
+
+def test_digest_preview_requires_permission(app: object, member_client: object) -> None:
+    """Non-admin user should get 403 on the preview route."""
+    resp = member_client.get("/admin/digest/preview")
     assert resp.status_code == 403
 
 
