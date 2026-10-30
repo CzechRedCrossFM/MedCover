@@ -156,7 +156,7 @@ The `scheduler` container uses `docker-entrypoint-scheduler.sh` (no migrations) 
 ### Setup
 
 ```bash
-git clone https://github.com/spidermila/MedCover.git
+git clone https://github.com/CzechRedCrossFM/MedCover.git
 cd MedCover
 cp .env.example .env          # Fill in your local secrets
 docker compose up --build     # Starts web + scheduler + MSSQL
@@ -419,14 +419,14 @@ beforehand, e.g.
 
 ## MemberBase (member directory and single sign-on)
 
-[MemberBase](https://github.com/spidermila/MemberBase) („Evidence členů“)
+[MemberBase](https://github.com/CzechRedCrossFM/MemberBase) („Evidence členů“)
 is the member directory that MedCover will use for identities, passwords,
 roles and qualifications: OpenLDAP holds the data, Keycloak is the only
 login (OIDC, TOTP, passkeys), and the MemberBase app administers it.
 MedCover does not use it yet. This section is MedCover's side of how the two
 repositories are developed and deployed together; MemberBase's side,
 including the exact contract between the apps, is in
-[MemberBase's `DEVOPS.md`](https://github.com/spidermila/MemberBase/blob/main/DEVOPS.md).
+[MemberBase's `DEVOPS.md`](https://github.com/CzechRedCrossFM/MemberBase/blob/main/DEVOPS.md).
 
 ### Who owns what
 
@@ -447,7 +447,7 @@ Rules:
   MemberBase stack. Production connects the same services inside one Azure
   Container Apps environment.
 - **Production runs images, never source.** MemberBase publishes its own
-  images to `ghcr.io/spidermila/`; the infrastructure repository pins which
+  images to `ghcr.io/czechredcrossfm/`; the infrastructure repository pins which
   versions run.
 - **Real deployment details stay out of both public repositories:** host
   names, the directory base DN, secrets and Azure resource names belong in
@@ -637,7 +637,7 @@ Azure SQL database and applies any later migrations on subsequent deploys.
 > **Historical note:** earlier revisions carried 45 PostgreSQL-era migrations
 > that could not run on MSSQL and required a manual `stamp head` +
 > autogenerate bootstrap. Those were squashed into the single baseline in
-> [PR #381](https://github.com/spidermila/MedCover/pull/381); the manual step
+> [PR #381](https://github.com/CzechRedCrossFM/MedCover/pull/381); the manual step
 > is gone.
 
 ### Subsequent deployments
@@ -1119,7 +1119,7 @@ MSSQL Server is a significantly heavier container than the PostgreSQL it replace
 
 If the container fails to start, check available memory: MSSQL Express requires at least 1 GB RAM. The compose file caps it at 512 MB buffer pool via `MSSQL_MEMORY_LIMIT_MB`; the OS-level limit should be at least 1.5 GB.
 
-> **Historical note:** The dev stack originally used PostgreSQL 17. PostgreSQL was removed and replaced with MSSQL in [PR #381](https://github.com/spidermila/MedCover/pull/381).
+> **Historical note:** The dev stack originally used PostgreSQL 17. PostgreSQL was removed and replaced with MSSQL in [PR #381](https://github.com/CzechRedCrossFM/MedCover/pull/381).
 
 ---
 

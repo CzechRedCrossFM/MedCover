@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: ghcr.io/spidermila/medcover
+  IMAGE_NAME: ghcr.io/czechredcrossfm/medcover
 
 jobs:
   build:

@@ -1,9 +1,9 @@
 # MedCover
 
-[![CI](https://github.com/spidermila/MedCover/actions/workflows/ci.yml/badge.svg)](https://github.com/spidermila/MedCover/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-847%20passed-brightgreen)](https://github.com/spidermila/MedCover/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-84%25-green)](https://github.com/spidermila/MedCover/actions/workflows/ci.yml)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/spidermila/MedCover?utm_source=oss&utm_medium=github&utm_campaign=spidermila%2FMedCover&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+[![CI](https://github.com/CzechRedCrossFM/MedCover/actions/workflows/ci.yml/badge.svg)](https://github.com/CzechRedCrossFM/MedCover/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-847%20passed-brightgreen)](https://github.com/CzechRedCrossFM/MedCover/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-84%25-green)](https://github.com/CzechRedCrossFM/MedCover/actions/workflows/ci.yml)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/CzechRedCrossFM/MedCover?utm_source=oss&utm_medium=github&utm_campaign=CzechRedCrossFM%2FMedCover&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 MedCover is a web application for the **Czech Red Cross** that replaces a Google Sheets–based medical cover planning solution.
 It manages events, spot assignments, user roles, equipment, and reporting — all in Czech, tailored to the organisation's workflows.
@@ -36,7 +36,7 @@ It manages events, spot assignments, user roles, equipment, and reporting — al
 
 ```bash
 # 1. Clone and create virtual environment
-git clone git@github.com:spidermila/MedCover.git && cd MedCover
+git clone git@github.com:CzechRedCrossFM/MedCover.git && cd MedCover
 python3.14 -m venv .venv && source .venv/bin/activate
 
 # 2. Install dependencies
