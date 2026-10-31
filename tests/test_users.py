@@ -4,6 +4,8 @@ import io
 import re
 import uuid
 from datetime import datetime, timezone
+from html import unescape
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import sqlalchemy as sa
@@ -18,6 +20,7 @@ from app.models.qualification import Qualification
 from app.models.role import ROLE_PERMISSIONS, Role
 from app.models.user import EventTimeFormat, UserAccount
 from app.queries import active_users_list
+from tests.conftest import _make_user
 
 # ── Profile ───────────────────────────────────────────────────────────────────
 
@@ -1183,6 +1186,56 @@ class TestBatchAction:
 
 class TestUserListFiltersAndSort:
     """Tests for role filter and created_at sort on /users/."""
+
+    @pytest.fixture
+    def qualified_users(self, app):
+        with app.app_context():
+            qualification = Qualification(name="Zdravotník filtr")
+            extra = Qualification(name="Další kvalifikace")
+            deleted = Qualification(name="Smazaná kvalifikace", is_deleted=True)
+            db.session.add_all([qualification, extra, deleted])
+            for name, role, qualifications, archived in (
+                ("match", Role.MEMBER, [qualification, extra], False),
+                ("viewer", Role.VIEWER, [qualification], False),
+                ("archived", Role.MEMBER, [qualification], True),
+                ("other", Role.MEMBER, [deleted], False),
+            ):
+                user = _make_user(f"{name}@filter.test", name, role)
+                user.qualifications = qualifications
+                user.is_archived = archived
+            db.session.commit()
+
+    @pytest.mark.parametrize(
+        "filters,expected",
+        [
+            ({}, {"match", "viewer"}),
+            ({"role": Role.MEMBER}, {"match"}),
+            ({"q": "viewer"}, {"viewer"}),
+            ({"archived": "1"}, {"archived"}),
+            ({"qualification": "Smazaná kvalifikace"}, set()),
+            ({"qualification": "Unknown qualification"}, set()),
+        ],
+    )
+    def test_qualification_filter(self, admin_client, qualified_users, filters, expected):
+        response = admin_client.get("/users/", query_string={"qualification": "Zdravotník filtr", **filters})
+        assert response.status_code == 200
+        for name in ("match", "viewer", "archived", "other"):
+            assert (f"{name}@filter.test".encode() in response.data) is (name in expected)
+        assert ">Smazaná kvalifikace</a>" not in response.get_data(as_text=True)
+
+    def test_qualification_filter_survives_navigation(self, admin_client, qualified_users, monkeypatch):
+        monkeypatch.setattr("app.routes.users._PAGE_SIZE", 1)
+        response = admin_client.get("/users/", query_string={"qualification": "Zdravotník filtr", "sort": "email"})
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'name="qualification" value="Zdravotník filtr"' in html
+        links = [parse_qs(urlsplit(unescape(href)).query) for href in re.findall(r'href="(/users/\?[^\"]*)"', html)]
+        for key, value in (("page", "2"), ("role", Role.MEMBER), ("archived", "1"), ("sort", "name")):
+            relevant = [query for query in links if query.get(key) == [value]]
+            assert relevant, key
+            assert all(query.get("qualification") == ["Zdravotník filtr"] for query in relevant)
+        assert any(query.get("qualification") == ["Další kvalifikace"] for query in links)
+        assert any("qualification" not in query for query in links)
 
     def test_role_filter_returns_only_matching_users(self, app, admin_client):
         """GET /users/?role=Viewer returns only Viewer users."""
