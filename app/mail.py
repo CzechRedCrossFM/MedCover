@@ -108,6 +108,15 @@ def _compute_send_after(event_start: datetime, now: datetime, settings: AppSetti
     return now + timedelta(minutes=minutes)
 
 
+_RETRY_BACKOFF_BASE: timedelta = timedelta(minutes=2)
+_RETRY_BACKOFF_FACTOR = 4
+
+
+def _retry_send_after(retry_count: int) -> datetime:
+    """Earliest next attempt after the ``retry_count``-th failure: 2 min, 8 min, 32 min, ..."""
+    return datetime.now(timezone.utc) + _RETRY_BACKOFF_BASE * _RETRY_BACKOFF_FACTOR ** (retry_count - 1)
+
+
 # ---------------------------------------------------------------------------
 # Notification catalog — single source of truth (AD17)
 # ---------------------------------------------------------------------------
@@ -438,6 +447,9 @@ def _merge_into_existing(
     else:
         merged_send_after = min(existing.send_after, computed_send_after)
     existing.send_after = merged_send_after
+    # The merged notification is new content, so it gets the full set of send
+    # attempts rather than inheriting the failures of the row it replaced.
+    existing.retry_count = 0
     existing.to_email = to_email
     existing.subject = subject
     existing.body = body
@@ -493,9 +505,9 @@ def enqueue_deferred(
     branch after re-loading the winning row.
 
     Lookup key: (user_id, event_id, notification_type, status='pending').
-    On lookup hit: overwrites the row's subject/body/change_value and takes
-    ``min(existing, computed)`` on ``send_after`` (immediate — NULL — always
-    wins over any future timestamp).
+    On lookup hit: overwrites the row's subject/body/change_value, resets
+    ``retry_count`` to 0 and takes ``min(existing, computed)`` on
+    ``send_after`` (immediate — NULL — always wins over any future timestamp).
 
     On lookup miss: inserts a new row with ``send_after`` computed from
     proximity tier settings, or ``NULL`` if the request-scoped
@@ -745,7 +757,9 @@ def _flush_and_notify(event: Event, send_fn: Callable[[UserAccount, Event], None
 
     1. Force every pending outbox row for this event to send immediately
        (``send_after=NULL``) so already-queued edits go out with the
-       notification instead of being stranded.
+       notification instead of being stranded. Retries are reset
+       (``retry_count=0``) too, so a row that was backing off after an SMTP
+       error gets its full set of attempts rather than the few it had left.
     2. Call ``send_fn(user, event)`` (immediate) for the union of currently-
        assigned users and users who have any pending outbox rows for this
        event.
@@ -769,7 +783,7 @@ def _flush_and_notify(event: Event, send_fn: Callable[[UserAccount, Event], None
             OutboxEmail.event_id == event.id,
             OutboxEmail.status == "pending",
         )
-        .values(send_after=None)
+        .values(send_after=None, retry_count=0)
         .execution_options(synchronize_session="fetch")
     )
 
@@ -975,6 +989,7 @@ def drain_one_outbox_email() -> bool:
             )
             _write_failure_audit(row)
         else:
+            row.send_after = _retry_send_after(row.retry_count)
             log.warning(
                 "Mail send failed (attempt %d/%d): id=%d to=%s — %s",
                 row.retry_count,
@@ -1384,11 +1399,18 @@ def drain_batched_outbox() -> bool:
     except Exception as exc:  # noqa: BLE001
         err = str(exc)
         for r in active_rows:
-            r.retry_count += 1
             r.last_error = err
+            if r.send_after is not None and r.send_after > now_utc:
+                # Rode along without being due: don't spend its attempts or reschedule it.
+                continue
+            r.retry_count += 1
             if r.retry_count >= OutboxEmail.MAX_RETRIES:
                 r.status = "failed"
-        _write_batch_failure_audit(to_email, subject, err, active_rows)
+            else:
+                r.send_after = _retry_send_after(r.retry_count)
+        failed_rows = [r for r in active_rows if r.status == "failed"]
+        if failed_rows:
+            _write_batch_failure_audit(to_email, subject, err, failed_rows)
         db.session.commit()
         log.warning(
             "Batch mail failed (user_id=%s to=%s rows=%d) — %s",
