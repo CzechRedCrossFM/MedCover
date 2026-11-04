@@ -26,6 +26,7 @@ from app.mail import (
     drain_batched_outbox,
     drain_one_outbox_email,
     enqueue_deferred,
+    flush_and_notify_archived,
     send_admin_digest,
     send_assignment_confirmed,
     send_assignment_released,
@@ -362,6 +363,30 @@ class TestProcessEmailQueue:
             assert row.status == "pending"
             assert row.retry_count == 1
             assert "Connection refused" in row.last_error
+            wait = row.send_after - datetime.now(timezone.utc)
+            assert timedelta(minutes=1) < wait <= timedelta(minutes=2)
+
+        with app.app_context():
+            with patch("flask_mail.Mail.send") as mock_send:
+                assert drain_one_outbox_email() is False
+            mock_send.assert_not_called()
+
+    def test_second_failure_backs_off_longer(self, app):
+        row_id = self._seed_pending(app)
+        with app.app_context():
+            row = db.session.get(OutboxEmail, row_id)
+            row.retry_count = 1
+            db.session.commit()
+
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("Connection refused")):
+                drain_one_outbox_email()
+
+        with app.app_context():
+            row = db.session.get(OutboxEmail, row_id)
+            assert row.retry_count == 2
+            wait = row.send_after - datetime.now(timezone.utc)
+            assert timedelta(minutes=7) < wait <= timedelta(minutes=8)
 
     def test_exhausted_retries_marks_row_failed(self, app):
         """After MAX_RETRIES failures the row must be permanently 'failed'."""
@@ -764,6 +789,54 @@ class TestEnqueueDeferred:
             assert len(rows) == 1
             assert rows[0].send_after is None
 
+    def test_merge_resets_retry_count(self, app):
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            row = _make_batched_row(
+                user,
+                event,
+                "event_published",
+                send_after=datetime.now(timezone.utc) + timedelta(minutes=7),
+            )
+            row.retry_count = 2
+            db.session.commit()
+            row_id = row.id
+        with app.app_context():
+            user = db.session.scalar(db.select(UserAccount))
+            event = db.session.scalar(db.select(Event))
+            enqueue_deferred(user, event, "event_published", "Subj v2", "body")
+            db.session.commit()
+        with app.app_context():
+            row = db.session.get(OutboxEmail, row_id)
+            assert row.status == "pending"
+            assert row.retry_count == 0
+            assert row.subject == "Subj v2"
+
+    def test_merged_row_gets_full_attempts_after_failure(self, app):
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            row = _make_batched_row(
+                user,
+                event,
+                "event_published",
+                send_after=datetime.now(timezone.utc) - timedelta(minutes=1),
+            )
+            row.retry_count = OutboxEmail.MAX_RETRIES - 1
+            db.session.commit()
+            row_id = row.id
+        with app.app_context():
+            user = db.session.scalar(db.select(UserAccount))
+            event = db.session.scalar(db.select(Event))
+            enqueue_deferred(user, event, "event_published", "Subj v2", "body")
+            db.session.commit()
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("SMTP down")):
+                assert drain_batched_outbox() is True
+        with app.app_context():
+            row = db.session.get(OutboxEmail, row_id)
+            assert row.status == "pending"
+            assert row.retry_count == 1
+
     def test_two_calls_same_triple_single_row(self, app):
         with app.app_context():
             user, event = _make_ed_event(delta_hours=72)
@@ -1035,6 +1108,67 @@ class TestDrainSendAfterFilter:
         with app.app_context():
             row = db.session.get(OutboxEmail, row_id)
             assert row.status == "sent"
+
+
+class TestFlushResetsRetryBackoff:
+    """Archive/cancel flush gives backing-off pending rows their full attempts."""
+
+    @staticmethod
+    def _backing_off(
+        user: UserAccount,
+        event: Event,
+        retry_count: int = 2,
+        status: str = "pending",
+        notification_type: str = "event_changed",
+    ) -> int:
+        row = _make_batched_row(
+            user,
+            event,
+            notification_type,
+            send_after=datetime.now(timezone.utc) + timedelta(minutes=30),
+        )
+        row.retry_count = retry_count
+        row.status = status
+        return row.id
+
+    def test_flush_clears_send_after_and_retry_count_only_for_pending_rows_of_event(self, app):
+        with app.app_context():
+            user, event = _make_ed_event()
+            other_event = Event(
+                name="Jiná akce",
+                master_event_id=event.master_event_id,
+                start_datetime=event.start_datetime,
+                end_datetime=event.end_datetime,
+            )
+            db.session.add(other_event)
+            db.session.flush()
+            pending_id = self._backing_off(user, event)
+            other_event_id = self._backing_off(user, other_event)
+            failed_id = self._backing_off(
+                user, event, retry_count=OutboxEmail.MAX_RETRIES, status="failed", notification_type="event_published"
+            )
+            db.session.commit()
+            event_pk = event.id
+
+        with app.app_context():
+            event = db.session.get(Event, event_pk)
+            with patch("app.mail.send_event_archived"):
+                flush_and_notify_archived(event)
+            db.session.commit()
+
+        with app.app_context():
+            pending = db.session.get(OutboxEmail, pending_id)
+            assert pending.send_after is None
+            assert pending.retry_count == 0
+
+            other = db.session.get(OutboxEmail, other_event_id)
+            assert other.send_after is not None
+            assert other.retry_count == 2
+
+            failed = db.session.get(OutboxEmail, failed_id)
+            assert failed.status == "failed"
+            assert failed.send_after is not None
+            assert failed.retry_count == OutboxEmail.MAX_RETRIES
 
 
 # ── structured change_value + merge for event_changed ───────────────────────
@@ -1661,7 +1795,7 @@ class TestDrainBatchedOutbox:
             assert db.session.get(OutboxEmail, dead_id) is None
 
     def test_smtp_failure_batch_retry(self, app):
-        """SMTP raises → both rows stay pending with retry_count=1, one AuditLogEntry."""
+        """SMTP raises → both rows stay pending with retry_count=1, backed off, no AuditLogEntry."""
         with app.app_context():
             user, event = _make_ed_event(delta_hours=72)
             past = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -1678,10 +1812,105 @@ class TestDrainBatchedOutbox:
                 r = db.session.get(OutboxEmail, rid)
                 assert r.status == "pending"
                 assert r.retry_count == 1
+                wait = r.send_after - datetime.now(timezone.utc)
+                assert timedelta(minutes=1) < wait <= timedelta(minutes=2)
             audit_count = db.session.scalar(
                 db.select(db.func.count(AuditLogEntry.id)).where(AuditLogEntry.action_type == "email_failed")
             )
-            assert audit_count == 1
+            assert audit_count == 0
+
+        with app.app_context():
+            with patch("flask_mail.Mail.send") as mock_send:
+                assert drain_batched_outbox() is False
+            mock_send.assert_not_called()
+
+    def test_batch_second_failure_backs_off_longer(self, app):
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            past = datetime.now(timezone.utc) - timedelta(minutes=1)
+            r1 = _make_batched_row(user, event, "event_published", send_after=past)
+            r1.retry_count = 1
+            db.session.commit()
+            rid = r1.id
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("SMTP down")):
+                drain_batched_outbox()
+        with app.app_context():
+            r = db.session.get(OutboxEmail, rid)
+            assert r.retry_count == 2
+            wait = r.send_after - datetime.now(timezone.utc)
+            assert timedelta(minutes=7) < wait <= timedelta(minutes=8)
+
+    def test_batch_failure_mixed_attempts_audits_only_failed_row(self, app):
+        max_r = OutboxEmail.MAX_RETRIES
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            past = datetime.now(timezone.utc) - timedelta(minutes=1)
+            last = _make_batched_row(user, event, "event_published", send_after=past)
+            last.retry_count = max_r - 1
+            first = _make_batched_row(user, event, "event_cancelled", send_after=past)
+            db.session.commit()
+            last_id, first_id = last.id, first.id
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("SMTP down")):
+                drain_batched_outbox()
+        with app.app_context():
+            assert db.session.get(OutboxEmail, last_id).status == "failed"
+            r = db.session.get(OutboxEmail, first_id)
+            assert r.status == "pending"
+            assert r.retry_count == 1
+            assert r.send_after > datetime.now(timezone.utc)
+            entries = db.session.scalars(
+                db.select(AuditLogEntry).where(AuditLogEntry.action_type == "email_failed")
+            ).all()
+            assert len(entries) == 1
+            cj = entries[0].changes_json
+            cj = json.loads(cj) if isinstance(cj, str) else cj
+            assert cj["row_ids"] == [last_id]
+
+    def test_batch_failure_does_not_spend_attempts_of_rows_not_due(self, app):
+        max_r = OutboxEmail.MAX_RETRIES
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            now = datetime.now(timezone.utc)
+            future = now + timedelta(minutes=5)
+            a = _make_batched_row(user, event, "event_published", send_after=future)
+            a.retry_count = max_r - 1
+            b = _make_batched_row(user, event, "event_cancelled", send_after=now - timedelta(minutes=1))
+            db.session.commit()
+            a_id, b_id, a_send_after = a.id, b.id, a.send_after
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("SMTP down")):
+                drain_batched_outbox()
+        with app.app_context():
+            a = db.session.get(OutboxEmail, a_id)
+            assert a.status == "pending"
+            assert a.retry_count == max_r - 1
+            assert a.send_after == a_send_after
+            b = db.session.get(OutboxEmail, b_id)
+            assert b.retry_count == 1
+            wait = b.send_after - datetime.now(timezone.utc)
+            assert timedelta(minutes=1) < wait <= timedelta(minutes=2)
+
+    def test_backed_off_batch_row_sent_once_due(self, app):
+        with app.app_context():
+            user, event = _make_ed_event(delta_hours=72)
+            past = datetime.now(timezone.utc) - timedelta(minutes=1)
+            r1 = _make_batched_row(user, event, "event_published", send_after=past)
+            db.session.commit()
+            rid = r1.id
+        with app.app_context():
+            with patch("flask_mail.Mail.send", side_effect=Exception("SMTP down")):
+                drain_batched_outbox()
+        with app.app_context():
+            db.session.get(OutboxEmail, rid).send_after = past
+            db.session.commit()
+        with app.app_context():
+            with patch("flask_mail.Mail.send") as mock_send:
+                assert drain_batched_outbox() is True
+            mock_send.assert_called_once()
+        with app.app_context():
+            assert db.session.get(OutboxEmail, rid).status == "sent"
 
     def test_smtp_permanent_failure_all_failed(self, app):
         """Rows at MAX_RETRIES-1 → after SMTP failure, both status='failed', one audit."""
