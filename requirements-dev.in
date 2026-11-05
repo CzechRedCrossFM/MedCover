@@ -8,7 +8,7 @@ pytest
 pytest-cov
 pytest-env
 pytest-xdist
-testcontainers[postgres]
+testcontainers
 Faker
 flake8
 pre-commit

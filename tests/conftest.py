@@ -127,7 +127,7 @@ def pytest_configure(config: pytest.Config) -> None:
         return
 
     # Testcontainers is optional when TEST_DATABASE_URL supplies an existing database.
-    from testcontainers.mssql import SqlServerContainer  # pylint: disable=import-outside-toplevel
+    from testcontainers.community.mssql import SqlServerContainer  # pylint: disable=import-outside-toplevel
 
     container = SqlServerContainer(
         image="mcr.microsoft.com/mssql/server:2022-latest",
