@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl gnupg2 \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
     && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev libgssapi-krb5-2 \
     && apt-get purge -y --auto-remove curl gnupg2 \
@@ -15,6 +15,14 @@ RUN apt-get update \
 COPY requirements.txt requirements-telemetry.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
     && pip install --no-cache-dir --require-hashes -r requirements-telemetry.txt
+
+# Dev/test dependencies (pytest, tox, ...), only for the opt-in compose `test`
+# service. Off by default, so production, web and scheduler images get none.
+ARG INSTALL_DEV=false
+COPY requirements-dev.txt ./
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        pip install --no-cache-dir --require-hashes -r requirements-dev.txt; \
+    fi
 
 COPY . .
 

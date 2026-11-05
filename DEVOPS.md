@@ -189,7 +189,9 @@ image (`Dockerfile`) installs only `requirements.txt` plus
 `requirements-telemetry.txt` (production), so the
 running `web`/`scheduler` containers do **not** contain pytest/tox — running
 the suite inside them does not work. CI follows the same host-based approach
-(see `.github/workflows/ci.yml`).
+(see `.github/workflows/ci.yml`). An opt-in `test` compose
+service (below) installs the dev dependencies for environments where host-native
+runs cannot reach the database.
 
 Because the only database driver is now `pyodbc`, the host needs the
 **Microsoft ODBC Driver 18** and unixODBC installed once (pyodbc links against
@@ -218,6 +220,32 @@ pip install --require-hashes -r requirements-dev.txt
 export TEST_DATABASE_URL="mssql+pyodbc://SA:DevPassword123!@localhost:1433/medcover_test?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes"
 pytest          # or: tox -e py314  (mirrors CI)
 ```
+
+#### Fallback: run the suite inside the compose network
+
+Use this on macOS with Podman machine or Docker Desktop when host `pytest` or
+`scripts/create_test_dbs.py` fails with `Login timeout expired` (HYT00) against
+`localhost:1433`: the VM port-forward breaks the MSSQL login handshake.
+Container-to-container traffic is unaffected.
+
+```bash
+docker compose --profile test run --rm test                              # full suite
+docker compose --profile test run --rm test tests/test_users.py --no-cov # subset
+podman-compose --profile test run --rm test                              # Podman
+```
+
+- Compose starts `db` and `azurite` and waits until both are healthy. The runner
+  uses the isolated `medcover_test` database on the same `db` container as the dev stack.
+- The first run builds `localhost/medcover_test:latest`. After changing
+  `requirements*.txt`, rebuild with `docker compose --profile test build test`.
+  Code changes need no rebuild (bind mount).
+- Lower parallelism with `-n 2` if the VM is short on memory; `-n 0` disables
+  xdist. Do not use `-p no:xdist`, because `addopts` passes `-n`.
+- Files written into the checkout (`htmlcov/`, `.coverage*`, `.pytest_cache/`,
+  `__pycache__/`) are created by the container's root user. On rootful Docker on
+  Linux these root-owned files make the next host-native `pytest` run fail, so run
+  with `--user "$(id -u):$(id -g)"` there.
+- The host-native flow above stays the default. CI does not use this service.
 
 ### Run E2E browser tests (Playwright)
 
@@ -290,6 +318,7 @@ The embedded summary below reflects the actual file. Key points:
 - Both containers mount `.:/app` so local code changes reflect immediately
 - Both containers store DB backups in the bundled Azurite blob emulator — see [Backup storage](#backup-storage) below
 - Both containers have healthchecks; the scheduler checks a heartbeat file written every ~5 s
+- `test` (profile `test`) is an opt-in pytest runner. `compose up` never starts it. See [Run tests](#run-tests).
 - `db` uses **MSSQL 2022 Express** (`mcr.microsoft.com/mssql/server:2022-latest`) with Czech collation and RCSI enabled
 
 ```yaml
@@ -367,6 +396,29 @@ services:
       - ./mssql-init:/mssql-init:ro
     entrypoint: ["/bin/bash", "/mssql-init/setup.sh"]
     restart: "no"
+
+  # Opt-in test runner (profile "test"): never started by `compose up`.
+  test:
+    profiles: ["test"]
+    image: localhost/medcover_test:latest
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "true"
+    entrypoint: ["pytest"]
+    command: ["tests"]
+    volumes:
+      - .:/app:z
+    environment:
+      TEST_DATABASE_URL: "mssql+pyodbc://SA:DevPassword123!@db:1433/medcover_test?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes"
+      DATABASE_URL: "mssql+pyodbc://SA:DevPassword123!@db:1433/medcover_test?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes"
+      FLASK_ENV: testing
+      BACKUP_STORAGE_CONNECTION_STRING: "...;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+    depends_on:
+      db:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
 
 volumes:
   mssql_data:
@@ -533,13 +585,31 @@ That approach is replaced by the layout above. Remaining steps:
 ## Dockerfile
 
 ```dockerfile
-FROM python:3.14-slim
+FROM docker.io/library/python:3.14-slim
 
 WORKDIR /app
+
+# Install Microsoft ODBC Driver 18 for SQL Server
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl gnupg2 \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev libgssapi-krb5-2 \
+    && apt-get purge -y --auto-remove curl gnupg2 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements-telemetry.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
     && pip install --no-cache-dir --require-hashes -r requirements-telemetry.txt
+
+# Dev/test dependencies (pytest, tox, ...), only for the opt-in compose `test`
+# service. Off by default, so production, web and scheduler images get none.
+ARG INSTALL_DEV=false
+COPY requirements-dev.txt ./
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        pip install --no-cache-dir --require-hashes -r requirements-dev.txt; \
+    fi
 
 COPY . .
 
@@ -555,6 +625,8 @@ RUN chmod +x /docker-entrypoint.sh /docker-entrypoint-scheduler.sh
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]
 ```
+
+`--build-arg INSTALL_DEV=true` additionally installs `requirements-dev.txt`. Only the compose `test` service uses it. The default build contains no dev dependencies.
 
 `docker-entrypoint.sh` runs `flask db upgrade` then `flask verify-schema` on every container start before handing off to the CMD process. If `verify-schema` detects missing tables/columns the container exits immediately rather than serving broken traffic.
 

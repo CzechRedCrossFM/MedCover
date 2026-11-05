@@ -85,6 +85,18 @@ Environment variables (`FLASK_ENV`, `SECRET_KEY`) are injected automatically by
 
 Coverage report is written to `htmlcov/` after each run.
 
+### Running tests inside a container (macOS + Podman fallback)
+
+If host `pytest` fails with `Login timeout expired` against `localhost:1433`
+(Podman machine / Docker Desktop on macOS), run the suite inside the Compose network:
+
+```bash
+docker compose --profile test run --rm test                              # or: podman-compose ...
+docker compose --profile test run --rm test tests/test_users.py --no-cov # extra pytest args
+```
+
+Host-native `pytest`/`tox` remains the default; see the "Run tests" section in [DEVOPS.md](DEVOPS.md) for details.
+
 ### Adding support for a new Python version
 
 1. Install the new Python interpreter on the host.
