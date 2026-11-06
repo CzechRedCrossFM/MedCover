@@ -1,0 +1,7 @@
+{% macro sort_header(label, key, classes='') -%}
+<th scope="col" class="sortable {{ classes }}" data-col="{{ key }}" aria-sort="none">
+  <button type="button" class="btn btn-link d-inline-flex align-items-center gap-1 p-0 fw-semibold text-body text-decoration-none">
+    <span>{{ label }}</span><span class="sort-icon text-muted flex-shrink-0" aria-hidden="true">↕</span>
+  </button>
+</th>
+{%- endmacro %}
