@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/sorting.html" import sort_header %}
 {% from 'macros/badges.html' import badge_secondary %}
 {% block title %}Přehled nadřazené akce — {{ master_event.name }} — MedCover{% endblock %}
 
@@ -75,20 +76,20 @@
 {# Events table #}
 {% if rows %}
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
+  <table class="table table-hover table-sm align-middle" id="masterEvents" data-sort-initial="none">
     <thead class="table-light">
       <tr>
-        <th>Akce</th>
-        <th>Datum</th>
-        <th>Stav</th>
-        <th class="text-end">Pozice (obsaz./celkem)</th>
-        <th class="text-end">Odprac. hodiny</th>
-        <th class="text-end">Ošetřených / účastníků</th>
+        {{ sort_header('Akce', 'name') }}
+        {{ sort_header('Datum', 'date') }}
+        {{ sort_header('Stav', 'status') }}
+        {{ sort_header('Pozice (obsaz./celkem)', 'filled', 'text-end') }}
+        {{ sort_header('Odprac. hodiny', 'worked', 'text-end') }}
+        {{ sort_header('Ošetřených / účastníků', 'patients', 'text-end') }}
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
-      <tr class="{{ event_type_row_class(row.event.event_type) }}">
+      <tr class="{{ event_type_row_class(row.event.event_type) }}" data-sv='{{ {'name': row.event.name, 'date': row.event.start_datetime.timestamp(), 'status': row.event.status.value, 'filled': row.filled_spots, 'worked': row.worked_hours | float, 'patients': row.patients} | tojson }}'>
         <td>
           <a href="{{ url_for('events.detail', event_id=row.event.id) }}">{{ row.event.name }}</a>
         </td>
@@ -126,23 +127,23 @@
 <h4 class="mt-4 mb-3">Statistiky účastníků</h4>
 {% if user_stat_rows %}
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
+  <table class="table table-hover table-sm align-middle" id="masterParticipants" data-sort-initial="none">
     <thead class="table-light">
       <tr>
-        <th>Účastník</th>
-        <th class="text-end">Směny odsloužené</th>
-        <th class="text-end">Směny plánované</th>
-        <th class="text-end">Hodiny odsloužené</th>
-        <th class="text-end">Hodiny plánované</th>
-        <th class="text-end">Hodiny celkem</th>
-        <th class="text-end">Hodiny zdarma</th>
-        <th class="text-end">Poslední směna</th>
-        <th class="text-end">Příští směna</th>
+        {{ sort_header('Účastník', 'name') }}
+        {{ sort_header('Směny odsloužené', 'shifts_served', 'text-end') }}
+        {{ sort_header('Směny plánované', 'shifts_planned', 'text-end') }}
+        {{ sort_header('Hodiny odsloužené', 'hours_served', 'text-end') }}
+        {{ sort_header('Hodiny plánované', 'hours_planned', 'text-end') }}
+        {{ sort_header('Hodiny celkem', 'hours_total', 'text-end') }}
+        {{ sort_header('Hodiny zdarma', 'hours_free', 'text-end') }}
+        {{ sort_header('Poslední směna', 'last_shift', 'text-end') }}
+        {{ sort_header('Příští směna', 'next_shift', 'text-end') }}
       </tr>
     </thead>
     <tbody>
       {% for u, s in user_stat_rows %}
-      <tr>
+      <tr data-sv='{{ {'name': u.name, 'shifts_served': s.shifts_served, 'shifts_planned': s.shifts_planned, 'hours_served': s.hours_served | float, 'hours_planned': s.hours_planned | float, 'hours_total': s.hours_total | float, 'hours_free': s.hours_free | float, 'last_shift': s.last_shift.timestamp() if s.last_shift else none, 'next_shift': s.next_shift.timestamp() if s.next_shift else none} | tojson }}'>
         <td>
           {% if current_user.has_permission("report.view") %}
             <a href="{{ url_for('reports.user_report', user_id=u.id) }}">{{ u.name }}</a>
@@ -168,4 +169,8 @@
 {% else %}
 <div class="alert alert-info">Žádní účastníci.</div>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/table-sort.js') }}?v={{ static_ver }}"></script>
 {% endblock %}

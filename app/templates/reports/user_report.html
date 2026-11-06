@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/sorting.html" import sort_header %}
 {% from 'macros/badges.html' import badge_secondary %}
 {% block title %}Přehled uživatele — {{ report_user.name }} — MedCover{% endblock %}
 
@@ -163,19 +164,19 @@
 {# Events table #}
 {% if rows %}
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
+  <table class="table table-hover table-sm align-middle" id="userEvents" data-sort-initial="none">
     <thead class="table-light">
       <tr>
-        <th>Akce</th>
-        <th>Datum</th>
-        <th>Stav</th>
-        <th class="text-end">Naplán. hodiny</th>
-        <th class="text-end">Odprac. hodiny</th>
+        {{ sort_header('Akce', 'name') }}
+        {{ sort_header('Datum', 'date') }}
+        {{ sort_header('Stav', 'status') }}
+        {{ sort_header('Naplán. hodiny', 'planned', 'text-end') }}
+        {{ sort_header('Odprac. hodiny', 'worked', 'text-end') }}
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
-      <tr class="{{ event_type_row_class(row.event.event_type) }}">
+      <tr class="{{ event_type_row_class(row.event.event_type) }}" data-sv='{{ {'name': row.event.name, 'date': row.event.start_datetime.timestamp(), 'status': row.event.status.value, 'planned': row.planned_hours | float, 'worked': row.actual_hours | float if row.actual_hours is not none else none} | tojson }}'>
         <td>
           <a href="{{ url_for('events.detail', event_id=row.event.id) }}">{{ row.event.name }}</a>
         </td>
@@ -208,4 +209,8 @@
 {% else %}
 <div class="alert alert-info">Uživatel nemá žádné přiřazení k akcím.</div>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/table-sort.js') }}?v={{ static_ver }}"></script>
 {% endblock %}

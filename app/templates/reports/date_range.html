@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/sorting.html" import sort_header %}
 {% from 'macros/badges.html' import badge_secondary %}
 {% block title %}Přehled za období — MedCover{% endblock %}
 
@@ -104,20 +105,20 @@
     <a href="{{ url_for('reports.me_report', me_id=group.master_event.id) }}">{{ group.master_event.name }}</a>
   </h5>
   <div class="table-responsive mb-3">
-    <table class="table table-hover table-sm align-middle">
+    <table class="table table-hover table-sm align-middle" id="rangeEvents-{{ group.master_event.id }}" data-sort-initial="none">
       <thead class="table-light">
         <tr>
-          <th>Akce</th>
-          <th>Datum</th>
-          <th>Stav</th>
-          <th class="text-end">Pozice (obsaz./celkem)</th>
-          <th class="text-end">Odprac. hodiny</th>
-          <th class="text-end">Ošetřených / účastníků</th>
+          {{ sort_header('Akce', 'name') }}
+          {{ sort_header('Datum', 'date') }}
+          {{ sort_header('Stav', 'status') }}
+          {{ sort_header('Pozice (obsaz./celkem)', 'filled', 'text-end') }}
+          {{ sort_header('Odprac. hodiny', 'worked', 'text-end') }}
+          {{ sort_header('Ošetřených / účastníků', 'patients', 'text-end') }}
         </tr>
       </thead>
       <tbody>
         {% for ev in group.events %}
-        <tr class="{{ event_type_row_class(ev.event_type) }}">
+        <tr class="{{ event_type_row_class(ev.event_type) }}" data-sv='{{ {'name': ev.name, 'date': ev.start_datetime.timestamp(), 'status': ev.status.value, 'filled': ev.assignments | length if ev.staffing_mode == 'CONDITIONS' else ev.filled_spots, 'worked': ev.actual_hours | float if ev.actual_hours is not none else none, 'patients': (ev.post_event_count or 0) if ev.event_type.name != 'PRESENTATION' else none} | tojson }}'>
           <td>
             <a href="{{ url_for('events.detail', event_id=ev.id) }}">{{ ev.name }}</a>
           </td>
@@ -150,23 +151,23 @@
 {% if results.user_stat_rows %}
 <h4 class="mt-4 mb-3">Statistiky účastníků za období</h4>
 <div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
+  <table class="table table-hover table-sm align-middle" id="rangeParticipants" data-sort-initial="none">
     <thead class="table-light">
       <tr>
-        <th>Účastník</th>
-        <th class="text-end">Směny odsloužené</th>
-        <th class="text-end">Směny plánované</th>
-        <th class="text-end">Hodiny odsloužené</th>
-        <th class="text-end">Hodiny plánované</th>
-        <th class="text-end">Hodiny celkem</th>
-        <th class="text-end">Hodiny zdarma</th>
-        <th class="text-end">Poslední směna</th>
-        <th class="text-end">Příští směna</th>
+        {{ sort_header('Účastník', 'name') }}
+        {{ sort_header('Směny odsloužené', 'shifts_served', 'text-end') }}
+        {{ sort_header('Směny plánované', 'shifts_planned', 'text-end') }}
+        {{ sort_header('Hodiny odsloužené', 'hours_served', 'text-end') }}
+        {{ sort_header('Hodiny plánované', 'hours_planned', 'text-end') }}
+        {{ sort_header('Hodiny celkem', 'hours_total', 'text-end') }}
+        {{ sort_header('Hodiny zdarma', 'hours_free', 'text-end') }}
+        {{ sort_header('Poslední směna', 'last_shift', 'text-end') }}
+        {{ sort_header('Příští směna', 'next_shift', 'text-end') }}
       </tr>
     </thead>
     <tbody>
       {% for u, s in results.user_stat_rows %}
-      <tr>
+      <tr data-sv='{{ {'name': u.name, 'shifts_served': s.shifts_served, 'shifts_planned': s.shifts_planned, 'hours_served': s.hours_served | float, 'hours_planned': s.hours_planned | float, 'hours_total': s.hours_total | float, 'hours_free': s.hours_free | float, 'last_shift': s.last_shift.timestamp() if s.last_shift else none, 'next_shift': s.next_shift.timestamp() if s.next_shift else none} | tojson }}'>
         <td>
           {% if current_user.has_permission("report.view") %}
             <a href="{{ url_for('reports.user_report', user_id=u.id) }}">{{ u.name }}</a>
@@ -196,4 +197,8 @@
 {% else %}
 <div class="alert alert-info">Zadejte rozsah dat a klikněte na <strong>Zobrazit přehled</strong>.</div>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/table-sort.js') }}?v={{ static_ver }}"></script>
 {% endblock %}

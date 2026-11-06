@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/sorting.html" import sort_header %}
 {% block title %}Přehled výkazů — MedCover{% endblock %}
 
 {% block content %}
@@ -47,25 +48,25 @@
 
 {% if groups %}
 <div class="table-responsive">
-  <table class="table table-sm table-hover align-middle">
+  <table class="table table-sm table-hover align-middle" id="workSummary" data-sort-initial="none" data-sort-group="user">
     <thead class="table-light">
       <tr>
-        <th>Jméno</th>
-        <th>Název akce</th>
-        <th class="text-nowrap">Datum</th>
-        <th>Stav</th>
-        <th class="text-end">Hodiny odsloužené</th>
-        <th class="text-end">Hodiny plánované</th>
-        <th class="text-end">Hodiny celkem</th>
-        <th class="text-end">Hodiny placené</th>
-        <th class="text-end">Hodiny zdarma</th>
+        {{ sort_header('Jméno', 'user') }}
+        {{ sort_header('Název akce', 'name') }}
+        {{ sort_header('Datum', 'date', 'text-nowrap') }}
+        {{ sort_header('Stav', 'status') }}
+        {{ sort_header('Hodiny odsloužené', 'hours_served', 'text-end') }}
+        {{ sort_header('Hodiny plánované', 'hours_planned', 'text-end') }}
+        {{ sort_header('Hodiny celkem', 'hours_total', 'text-end') }}
+        {{ sort_header('Hodiny placené', 'hours_paid', 'text-end') }}
+        {{ sort_header('Hodiny zdarma', 'hours_free', 'text-end') }}
       </tr>
     </thead>
-    <tbody>
-      {% for group in groups %}
+    {% for group in groups %}
+    <tbody data-sv='{{ {"user": group.total.user_name} | tojson }}'>
         {% for row in group.rows %}
-        <tr {% if row.incomplete %}class="table-warning"{% endif %}>
-          <td>{% if loop.first %}{{ row.user_name }}{% endif %}</td>
+        <tr data-sv='{{ {'user': row.user_name, 'name': row.event_name, 'date': row.start_datetime.timestamp(), 'status': row.status_label, 'hours_served': row.hours_served | float, 'hours_planned': row.hours_planned | float, 'hours_total': row.hours_total | float, 'hours_paid': row.hours_paid | float, 'hours_free': row.hours_free | float} | tojson }}' {% if row.incomplete %}class="table-warning"{% endif %}>
+          <td>{{ row.user_name }}</td>
           <td>{{ row.event_name }}</td>
           <td class="text-nowrap">{{ row.start_datetime | localdt("%d.%m.%Y") }}</td>
           <td>{{ row.status_label }}</td>
@@ -76,7 +77,7 @@
           <td class="text-end">{{ row.hours_free | cznum }}</td>
         </tr>
         {% endfor %}
-        <tr class="table-light fw-semibold">
+        <tr class="table-light fw-semibold" data-sort-fixed>
           <td colspan="4">Celkem — {{ group.total.user_name }}</td>
           <td class="text-end">{{ group.total.hours_served | cznum }}</td>
           <td class="text-end">{{ group.total.hours_planned | cznum }}</td>
@@ -84,8 +85,8 @@
           <td class="text-end">{{ group.total.hours_paid | cznum }}</td>
           <td class="text-end">{{ group.total.hours_free | cznum }}</td>
         </tr>
-      {% endfor %}
     </tbody>
+    {% endfor %}
     <tfoot>
       <tr class="table-secondary fw-bold">
         <td colspan="4">Celkem za období</td>
@@ -107,4 +108,8 @@
 {% endif %}
 
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/table-sort.js') }}?v={{ static_ver }}"></script>
 {% endblock %}
