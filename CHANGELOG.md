@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-07
+
+### Added
+- External collaborator role („Externí spolupracovník“). External cannot be combined with any other role; invitations can be sent as external, and such recipients get only this role on registration. Externals see and can sign up only for unfilled events in „Přihlášky otevřeny“ that start within a configurable window („Předstih pro externí spolupracovníky (dny)“ in admin settings, 1–365, default 10), plus events they are already assigned to. Users with `event.edit` can open an event to externals early from its detail page. Externals with a matching qualification get a batched email about new opportunities (sent every five minutes; the „Akce pro externí spolupracovníky“ notification can be switched off by an admin). Their access to reports, work summaries, equipment and master events is limited to their own records. Four migrations add the invitation flag, the per-event early-opening flag, the notification setting and the window setting. (#607)
+- Filter the „Uživatelé“ list by qualification; the filter combines with role, search and archived filters and is kept across sorting and paging. (#616)
+- Sortable tables on the „Přehledy“ report pages. (#634)
+- URLs (`http(s)://` and `www.`) in event descriptions become links that open in a new tab. (#620)
+
+### Changed
+- gunicorn runs `gthread` workers (4 threads) with `--keep-alive 75` and recycles workers after 500 ± 50 requests, so idle connections no longer cause worker timeouts and memory does not build up. `docker-compose.prod.yml` uses the Dockerfile `CMD` instead of its own command. (#619)
+- Repository and container image references point to the `CzechRedCrossFM` organisation. Before deploying, `ghcr.io/czechredcrossfm/medcover` must be pullable by the Azure container apps and the infra repository's image pin must use the new name. (#625)
+- The DEV seed creates a small synthetic dataset with dates relative to the run date instead of relying on real data. (#617)
+- Dependency updates: holidays 0.106, pytz 2026.5, playwright 1.64.0, pytest-playwright 0.10.0; dev tooling mypy 2.4.0, tox 4.67.5, pre-commit 4.7.0, pytest-env 1.8.0, faker 40.43.0; security-fix updates of the pinned requirements. (#594, #595, #596, #597, #598, #602, #603, #604, #605, #606, #615, #630, #633)
+
+### Fixed
+- Assigning someone else to an event sends them an immediate notification email; signing yourself up still does not. (#587)
+- Events a user is already assigned to are no longer offered to them for sign-up in the events table, „Pro mě“ filter and the calendar feed. (#599)
+- Removing an assignment because the participant no longer meets the spot's qualifications also clears them as the event's responsible person. (#586)
+- Registration applies the invited qualifications and the Member role to new accounts reliably. (#589)
+- The admin digest preview renders with its styles in production; it is now served directly with its own sandboxed CSP. (#621)
+- Transient SMTP errors no longer use up all outbox retries within a minute: failed sends back off exponentially (2 min, then 8 min), and only the final failure is reported in the audit log. (#631)
+- The „Entita“ column in the „Audit log“ wraps instead of pushing the „Detail“ button off screen. (#601)
+
+### Security
+- oauthlib 4.0.0 → 4.0.1 (CVE-2026-49272), pulled in by the Azure Monitor telemetry extra.
+
 ## [1.3.0] - 2026-10-05
 
 ### Added
@@ -504,7 +530,8 @@ První stabilní vydání MedCoveru. Aplikace nahrazuje původní tabulku v Goog
 - `sslmode=require` enforced for production `DATABASE_URL`
 - Feedback deletion blocked when `DEV_LOGIN_ENABLED=True` (test environment guard)
 
-[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/spidermila/MedCover/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/spidermila/MedCover/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/spidermila/MedCover/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/spidermila/MedCover/compare/v1.2.0...v1.2.1
