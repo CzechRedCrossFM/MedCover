@@ -20,6 +20,8 @@
 
   var cfg = document.getElementById("tm-config");
   if (!cfg) return;
+  // A master event without events renders no table and none of the popups.
+  if (!document.getElementById("tm-table")) return;
 
   var ME_ID = parseInt(cfg.dataset.meId, 10);
 
