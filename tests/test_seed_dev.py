@@ -14,7 +14,7 @@ from app.models.event import Event, EventSpot, EventStatus, EventTemplate, Staff
 from app.models.qualification import Qualification
 from app.models.role import ROLE_PERMISSIONS
 from app.models.settings import AppSettings
-from app.models.user import UserAccount
+from app.models.user import NAME_PLACEHOLDER, UserAccount
 from app.routes.dev import DEV_ACCOUNTS
 from app.staffing import evaluate_staffing, validate_condition_plan
 
@@ -99,6 +99,7 @@ def test_seed_is_idempotent_and_consistent(app):
 
         users = db.session.scalars(db.select(UserAccount)).all()
         assert all(u.email.endswith("@medcover.local") for u in users)
+        assert all(u.surname and u.first_name and NAME_PLACEHOLDER not in (u.surname, u.first_name) for u in users)
         for account in DEV_ACCOUNTS:
             user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == account["email"]))
             assert user and user.check_password("devpassword")

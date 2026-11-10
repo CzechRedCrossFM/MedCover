@@ -7,7 +7,7 @@ from app.models.assignment import Assignment
 from app.models.event import Event, EventSpot, EventStatus
 from app.models.master_event import MasterEvent
 from app.models.role import Role
-from app.models.user import UserAccount
+from app.models.user import UserAccount, split_full_name
 from app.queries import (
     conflicting_events_for_users,
     user_conflicts_across_events,
@@ -17,7 +17,8 @@ from app.queries import (
 
 def _make_user(email: str, name: str = "U") -> UserAccount:
     role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-    u = UserAccount(email=email, name=name, is_active=True)
+    surname, first_name = split_full_name(name)
+    u = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
     u.set_password("testpass123")
     u.roles = [role]
     db.session.add(u)

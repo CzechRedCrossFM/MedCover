@@ -23,7 +23,7 @@ from app.models.invite import RegistrationInvite
 from app.models.outbox import OutboxEmail
 from app.models.qualification import Qualification
 from app.models.role import Role, validate_role_combination
-from app.models.user import CalendarView, EventTimeFormat, UserAccount
+from app.models.user import CalendarView, EventTimeFormat, UserAccount, parse_name_parts
 from app.models.user import user_roles as user_roles_table
 from app.profile_photo import MAX_UPLOAD_BYTES as PHOTO_MAX_UPLOAD_BYTES
 from app.profile_photo import (
@@ -32,6 +32,7 @@ from app.profile_photo import (
     photo_token,
     process_profile_photo_upload,
 )
+from app.queries import user_name_matches, user_name_order
 from app.routes.assignments import lock_condition_event, refresh_responsible_person
 from app.signature import (
     MAX_UPLOAD_BYTES,
@@ -160,19 +161,22 @@ def _update_profile(user: UserAccount) -> Response:
         flash(RECORD_MODIFIED_MSG, "danger")
         return redirect(url_for("users.profile"))
     bind_form_version(user, request.form.get("version"))
-    before: dict[str, Any] = {"name": user.name, "phone": user.phone}
+    before: dict[str, Any] = {"surname": user.surname, "first_name": user.first_name, "phone": user.phone}
     if current_user.has_permission("user.edit_name"):
-        name = request.form.get("name", "").strip()
-        if not name:
-            flash("Jméno nesmí být prázdné.", "danger")
+        try:
+            surname, first_name = parse_name_parts(request.form.get("surname"), request.form.get("first_name"))
+        except ValueError as exc:
+            flash(str(exc), "danger")
             return redirect(url_for("users.profile"))
-        user.name = name
+        user.surname = surname
+        user.first_name = first_name
     phone_normalized = _normalize_phone(request.form.get("phone", ""))
     if not _validate_phone(phone_normalized):
         flash("Neplatný formát telefonního čísla.", "danger")
         return redirect(url_for("users.profile"))
     user.phone = phone_normalized or None
-    return _commit_profile_change(user, before, {"name": user.name, "phone": user.phone}, "Profil byl uložen.")
+    after: dict[str, Any] = {"surname": user.surname, "first_name": user.first_name, "phone": user.phone}
+    return _commit_profile_change(user, before, after, "Profil byl uložen.")
 
 
 def _preferences_snapshot(user: UserAccount) -> dict[str, Any]:
@@ -457,14 +461,16 @@ def index() -> str | Response:
         sort_dir = "asc"
 
     sort_col = {
-        "name": collate(UserAccount.name, CS_COLLATION),
         "email": UserAccount.email,
         "status": UserAccount.is_active,
         "created": UserAccount.created_at,
         "last_login": UserAccount.last_login_at,
-    }[sort]
-    if sort == "last_login":
-        order: tuple[Any, ...] = order_by_nulls_last(sort_col, descending=sort_dir == "desc")
+    }.get(sort)
+    order: tuple[Any, ...]
+    if sort_col is None:
+        order = user_name_order(descending=sort_dir == "desc")
+    elif sort == "last_login":
+        order = order_by_nulls_last(sort_col, descending=sort_dir == "desc")
     else:
         order = (sort_col.asc() if sort_dir == "asc" else sort_col.desc(),)
 
@@ -474,13 +480,12 @@ def index() -> str | Response:
     else:
         query = query.where(UserAccount.is_archived == sa.true())
     if q:
-        # Column collation (Czech_100_CI_AS_SC_UTF8) already gives us
-        # case-insensitive matching, so a bare LIKE keeps the column reference
-        # sargable — .ilike() on MSSQL compiles to LOWER(col) LIKE LOWER(?)
-        # which hides the column from any index.
+        # The column collation (Czech_100_CI_AS_SC_UTF8) makes LIKE case-insensitive;
+        # the name pattern is leading-wildcard over a concatenation of both parts,
+        # so it is a scan either way and no index is involved.
         query = query.where(
             db.or_(
-                UserAccount.name.like(f"%{q}%"),
+                user_name_matches(q),
                 UserAccount.email.like(f"%{q}%"),
             )
         )
@@ -541,12 +546,13 @@ def create_user() -> str | Response:
     if request.method == "GET":
         return render_template("users/create.html", all_roles=all_roles, all_qualifications=all_qualifications)
 
-    name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
     phone_normalized = _normalize_phone(request.form.get("phone", ""))
 
-    if not name:
-        flash("Jméno nesmí být prázdné.", "danger")
+    try:
+        surname, first_name = parse_name_parts(request.form.get("surname"), request.form.get("first_name"))
+    except ValueError as exc:
+        flash(str(exc), "danger")
         return render_template("users/create.html", all_roles=all_roles, all_qualifications=all_qualifications)
     if not email or not _EMAIL_RE.match(email):
         flash("Zadejte platný e-mail.", "danger")
@@ -562,7 +568,8 @@ def create_user() -> str | Response:
 
     # Create account with a random unusable password — user must use forgot-password to set one.
     user = UserAccount(
-        name=name,
+        surname=surname,
+        first_name=first_name,
         email=email,
         phone=phone_normalized or None,
         is_active=True,
@@ -688,12 +695,13 @@ def save_user(user_id: uuid.UUID) -> Response:
     bind_form_version(user, request.form.get("version"))
 
     # ── Basic info ──────────────────────────────────────────────────────────
-    name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
     phone_normalized = _normalize_phone(request.form.get("phone", ""))
 
-    if not name:
-        flash("Jméno nesmí být prázdné.", "danger")
+    try:
+        surname, first_name = parse_name_parts(request.form.get("surname"), request.form.get("first_name"))
+    except ValueError as exc:
+        flash(str(exc), "danger")
         return redirect(url_for("users.detail", user_id=user_id))
     if not email:
         flash("E-mail nesmí být prázdný.", "danger")
@@ -709,11 +717,22 @@ def save_user(user_id: uuid.UUID) -> Response:
             flash(f"E-mail {email} je již použit jiným uživatelem.", "danger")
             return redirect(url_for("users.detail", user_id=user_id))
 
-    info_before: dict[str, Any] = {"name": user.name, "email": user.email, "phone": user.phone}
-    user.name = name
+    info_before: dict[str, Any] = {
+        "surname": user.surname,
+        "first_name": user.first_name,
+        "email": user.email,
+        "phone": user.phone,
+    }
+    user.surname = surname
+    user.first_name = first_name
     user.email = email
     user.phone = phone_normalized or None
-    info_after: dict[str, Any] = {"name": user.name, "email": user.email, "phone": user.phone}
+    info_after: dict[str, Any] = {
+        "surname": user.surname,
+        "first_name": user.first_name,
+        "email": user.email,
+        "phone": user.phone,
+    }
     info_changed = info_before != info_after
     if info_changed:
         audit(

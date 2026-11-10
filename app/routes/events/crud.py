@@ -160,13 +160,18 @@ def _apply_index_order(
         )
         return query.order_by(spot_count_sq.asc() if _asc else spot_count_sq.desc())
     if sort_col == "rp":
-        rp_name_sq = (
-            db.select(UserAccount.name)
+        # Surname, then first name, in Czech collation, as user_name_order() sorts users.
+        rp_surname, rp_first_name = (
+            db.select(collate(column, CS_COLLATION))
             .where(UserAccount.id == Event.responsible_person_id)
             .correlate(Event)
             .scalar_subquery()
+            for column in (UserAccount.surname, UserAccount.first_name)
         )
-        return query.order_by(*order_by_nulls_last(rp_name_sq, descending=not _asc))
+        return query.order_by(
+            *order_by_nulls_last(rp_surname, descending=not _asc),
+            rp_first_name.desc() if not _asc else rp_first_name.asc(),
+        )
     # start (default)
     return query.order_by(Event.start_datetime.asc() if _asc else Event.start_datetime.desc())
 

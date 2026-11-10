@@ -508,7 +508,7 @@ class TestEventCreate:
         me_id = _make_master_event(app)
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            rp = UserAccount(email="rp_uuid@test.com", name="RP User", is_active=True)
+            rp = UserAccount(email="rp_uuid@test.com", surname="RP", first_name="User", is_active=True)
             rp.set_password("testpass123")
             rp.roles = [role]
             db.session.add(rp)
@@ -711,7 +711,9 @@ class TestEventLifecycle:
             db.session.add(me)
             db.session.flush()
             creator_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator_cancel@test.com", name="Creator", is_active=True)
+            creator = UserAccount(
+                email="creator_cancel@test.com", surname="Creator", first_name="Testovací", is_active=True
+            )
             creator.set_password("testpass123")
             creator.roles = [creator_role]
             db.session.add(creator)
@@ -761,7 +763,9 @@ class TestEventEdit:
             db.session.add(me)
             db.session.flush()
             creator_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator_edit@test.com", name="Creator", is_active=True)
+            creator = UserAccount(
+                email="creator_edit@test.com", surname="Creator", first_name="Testovací", is_active=True
+            )
             creator.set_password("testpass123")
             creator.roles = [creator_role]
             db.session.add(creator)
@@ -1188,7 +1192,9 @@ class TestAddSpot:
             db.session.add(me)
             db.session.flush()
             creator_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator_spot@test.com", name="Creator", is_active=True)
+            creator = UserAccount(
+                email="creator_spot@test.com", surname="Creator", first_name="Testovací", is_active=True
+            )
             creator.set_password("testpass123")
             creator.roles = [creator_role]
             db.session.add(creator)
@@ -1424,7 +1430,9 @@ class TestEditSpot:
             db.session.add(qual)
             db.session.flush()
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            member = UserAccount(email="ineligible_member@test.com", name="Ineligible", is_active=True)
+            member = UserAccount(
+                email="ineligible_member@test.com", surname="Ineligible", first_name="Testovací", is_active=True
+            )
             member.set_password("testpass123")
             member.roles = [role]
             db.session.add(member)
@@ -1450,7 +1458,9 @@ class TestEditSpot:
             db.session.add(qual)
             db.session.flush()
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            member = UserAccount(email="ineligible_member2@test.com", name="Ineligible2", is_active=True)
+            member = UserAccount(
+                email="ineligible_member2@test.com", surname="Ineligible2", first_name="Testovací", is_active=True
+            )
             member.set_password("testpass123")
             member.roles = [role]
             db.session.add(member)
@@ -1643,7 +1653,9 @@ class TestDeleteSpot:
         event_id, spot_id = self._create_event_with_spot(app)
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            member = UserAccount(email="occupied_member@test.com", name="Occupied", is_active=True)
+            member = UserAccount(
+                email="occupied_member@test.com", surname="Occupied", first_name="Testovací", is_active=True
+            )
             member.set_password("testpass123")
             member.roles = [role]
             db.session.add(member)
@@ -1747,7 +1759,8 @@ class TestEventChangedNotification:
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             member = UserAccount(
                 email="assigned_member_ecn@example.com",
-                name="Assigned Member",
+                surname="Assigned",
+                first_name="Member",
                 is_active=True,
             )
             member.set_password("testpass")
@@ -1798,7 +1811,8 @@ class TestEventChangedNotification:
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             member = UserAccount(
                 email="assigned_member_nochg@example.com",
-                name="Assigned Member 2",
+                surname="Assigned",
+                first_name="Member 2",
                 is_active=True,
             )
             member.set_password("testpass")
@@ -2168,7 +2182,7 @@ class TestUserPickerDuplicateFiltering:
             admin_user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "admin@test.com"))
 
             # Create a second active user
-            member = UserAccount(email="member_picker@test.com", name="Member Picker", is_active=True)
+            member = UserAccount(email="member_picker@test.com", surname="Member", first_name="Picker", is_active=True)
             member.set_password("testpass123")
             member.roles = [admin_role]
             db.session.add(member)
@@ -2231,7 +2245,9 @@ class TestUserPickerConflictDetection:
             admin_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
             admin_user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "admin@test.com"))
 
-            member = UserAccount(email="conflict_member@test.com", name="Conflict Member", is_active=True)
+            member = UserAccount(
+                email="conflict_member@test.com", surname="Conflict", first_name="Member", is_active=True
+            )
             member.set_password("testpass123")
             member.roles = [admin_role]
             db.session.add(member)
@@ -2337,7 +2353,7 @@ def test_spot_map_includes_description_and_qualifications(
             db.session.flush()
 
         role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-        user = UserAccount(email="spot_map_user@test.com", name="Spot Map User", is_active=True)
+        user = UserAccount(email="spot_map_user@test.com", surname="Spot", first_name="Map User", is_active=True)
         user.set_password("testpass123")
         user.roles = [role]
         if qual:
@@ -2741,7 +2757,7 @@ class TestBulkPrintout:
         """A role that lacks report.view must be denied, not just redirected."""
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.DEBRIEFING_MANAGER))
-            user = UserAccount(email="dm_printout@test.com", name="DM Printout", is_active=True)
+            user = UserAccount(email="dm_printout@test.com", surname="DM", first_name="Printout", is_active=True)
             user.set_password("testpass123")
             user.roles = [role]
             db.session.add(user)
@@ -2763,7 +2779,7 @@ class TestForMeFilter:
             db.session.flush()
 
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            user = UserAccount(email="forme@test.com", name="ForMe User", is_active=True)
+            user = UserAccount(email="forme@test.com", surname="ForMe", first_name="User", is_active=True)
             user.set_password("testpass123")
             user.roles = [role]
             db.session.add(user)
@@ -2837,7 +2853,7 @@ class TestForMeFilter:
             db.session.add(ev)
 
             role = db.session.scalar(db.select(Role).where(Role.name == Role.VIEWER))
-            user = UserAccount(email="viewer_forme@test.com", name="Viewer ForMe", is_active=True)
+            user = UserAccount(email="viewer_forme@test.com", surname="Viewer", first_name="ForMe", is_active=True)
             user.set_password("testpass123")
             user.roles = [role]
             db.session.add(user)
@@ -2858,12 +2874,12 @@ class TestForMeFilter:
             db.session.flush()
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
 
-            user = UserAccount(email="forme_occ@test.com", name="ForMe Occ", is_active=True)
+            user = UserAccount(email="forme_occ@test.com", surname="ForMe", first_name="Occ", is_active=True)
             user.set_password("testpass123")
             user.roles = [role]
             db.session.add(user)
 
-            other = UserAccount(email="other_occ@test.com", name="Other Occ", is_active=True)
+            other = UserAccount(email="other_occ@test.com", surname="Other", first_name="Occ", is_active=True)
             other.set_password("testpass123")
             other.roles = [role]
             db.session.add(other)
@@ -2914,7 +2930,7 @@ class TestForMeFilter:
             db.session.flush()
             spot.required_qualifications = [qual]
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            user = UserAccount(email="zeroeleg@test.com", name="ZeroElig User", is_active=True)
+            user = UserAccount(email="zeroeleg@test.com", surname="ZeroElig", first_name="User", is_active=True)
             user.set_password("testpass123")
             user.roles = [role]
             db.session.add(user)

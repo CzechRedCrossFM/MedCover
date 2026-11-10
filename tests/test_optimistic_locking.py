@@ -28,7 +28,7 @@ def _second_session(app):
 
 def _make_user(session) -> UserAccount:
     role = session.scalar(sa.select(Role).where(Role.name == Role.ADMIN))
-    user = UserAccount(email="olock_test@test.com", name="OLock User", is_active=True)
+    user = UserAccount(email="olock_test@test.com", surname="OLock", first_name="User", is_active=True)
     user.set_password("testpass123")
     user.roles = [role]
     session.add(user)
@@ -73,11 +73,11 @@ class TestVersionedModelsCrossSession:
                 row_a = sess_a.get(UserAccount, user_id)
                 row_b = sess_b.get(UserAccount, user_id)
 
-                row_a.name = "Name from A"
+                row_a.first_name = "Name from A"
                 row_a.version += 1
                 sess_a.commit()
 
-                row_b.name = "Name from B"
+                row_b.first_name = "Name from B"
                 row_b.version += 1
                 with pytest.raises(StaleDataError):
                     sess_b.commit()

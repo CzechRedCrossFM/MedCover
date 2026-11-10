@@ -50,7 +50,9 @@ def _fill_two_user_pages(app) -> None:
     # spills the last seeded user, "User NNN", onto a second page.
     with app.app_context():
         db.session.add_all(
-            UserAccount(email=f"u{i:03}@test.com", name=f"User {i:03}", password_hash="x", is_active=True)
+            UserAccount(
+                email=f"u{i:03}@test.com", surname="User", first_name=f"{i:03}", password_hash="x", is_active=True
+            )
             for i in range(USERS_PAGE_SIZE)
         )
         db.session.commit()

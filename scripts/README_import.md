@@ -86,7 +86,7 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
   "users": [
     {
       "gs_name":    "Testovací Rudolf",
-      "name":       "Rudolf Testovací",
+      "name":       "Testovací Rudolf",
       "email":      "rudolf.testovaci@example.com",
       "phone":      "+420 777 123 456",
       "zdravotnik": true
@@ -100,11 +100,11 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
       "end_time":           "18:00",
       "location":           "Sportovní hala FM",
       "paid":               true,
-      "responsible_person": "Rudolf Testovací",
+      "responsible_person": "Testovací Rudolf",
       "contact_person":     "Ukázkový Zdenko 603 123 456",
       "description":        "Typ: zdravotní dozor | Kontakt pořadatel: Ukázkový Zdenko",
       "time_missing":       false,
-      "signups":            ["Alfons Zkušební", "Viktor Fiktivní"]
+      "signups":            ["Zkušební Alfons", "Fiktivní Viktor"]
     }
   ]
 }
@@ -117,7 +117,7 @@ The script outputs a **version 2** JSON envelope with two arrays: `users` and `e
 | Field | Description |
 |---|---|
 | `gs_name` | Original name from the GS (e.g. `"Testovací Rudolf"`) |
-| `name` | Converted to *Firstname Lastname* order |
+| `name` | Same *Lastname Firstname* order as `gs_name`; the web app splits it at the first whitespace into surname and first name (editable in the import preview) |
 | `email` | From the "Lidi" sheet (may be `null` if not found) |
 | `phone` | From the "Lidi" sheet (may be `null`) |
 | `zdravotnik` | `true` if column D in Lidi is `True` → gets Zdravotník qualification |
@@ -126,7 +126,7 @@ Names are **unique** within the `users` array (deduplication done by the script)
 
 ### Event `signups` field
 
-List of already-assigned people (from GS columns N+), converted to *Firstname Lastname* order.
+List of already-assigned people (from GS columns N+), in *Lastname Firstname* order (surname first, as in the GS).
 Used by the web app to create `Assignment` records automatically.
 
 ---
@@ -204,4 +204,5 @@ Expected Lidi columns:
 | E | Phone number |
 
 Names in the Lidi sheet are expected in *Lastname Firstname* order (matching the GS convention).
-The script converts all names to *Firstname Lastname* for MedCover.
+The script keeps this order: every name in the JSON (`gs_name`, `name`, `responsible_person`, `signups`) is
+*Lastname Firstname*. Do not swap the parts, the web app treats the first word as the surname.

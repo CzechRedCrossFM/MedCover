@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from flask_login import UserMixin
+from sqlalchemy import ColumnElement
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, deferred
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -20,6 +22,72 @@ if TYPE_CHECKING:
     from app.models.invite import RegistrationInvite
     from app.models.master_event import MasterEvent
     from app.models.qualification import Qualification
+
+
+NAME_PLACEHOLDER = "(doplnit)"
+NAME_PART_MAX_LENGTH = 100
+_NAME_COLUMN_MAX_BYTES = 255
+
+
+def display_name(surname: str | None, first_name: str | None) -> str:
+    """Join the name parts into the displayed "Příjmení Jméno" form."""
+    return " ".join(part for part in (surname, first_name) if part)
+
+
+def split_full_name(full: str | None) -> tuple[str, str]:
+    """Split a one-string "Příjmení Jméno" name at its first whitespace.
+
+    Mirrors the SQL used by the migration that introduced the separate columns.
+    A single word becomes the surname and the first name gets the placeholder.
+    """
+    words = (full or "").split()
+    if not words:
+        return NAME_PLACEHOLDER, NAME_PLACEHOLDER
+    if len(words) == 1:
+        return words[0], NAME_PLACEHOLDER
+    return words[0], " ".join(words[1:])
+
+
+def is_name_placeholder(value: str) -> bool:
+    """True for the placeholder in any letter case and spacing, e.g. "( Doplnit )"."""
+    return "".join(value.split()).casefold() == NAME_PLACEHOLDER.replace(" ", "").casefold()
+
+
+def _name_part_length_error(label: str, value: str) -> str | None:
+    """Return a Czech error message if *value* exceeds the character or column byte limit."""
+    if len(value) > NAME_PART_MAX_LENGTH:
+        return f"{label} je příliš dlouhé (nejvýše {NAME_PART_MAX_LENGTH} znaků)."
+    if len(value.encode("utf-8")) > _NAME_COLUMN_MAX_BYTES:
+        return f"{label} obsahuje příliš mnoho speciálních znaků (např. emoji), zkraťte ho."
+    return None
+
+
+def parse_name_parts(
+    surname_raw: str | None,
+    first_name_raw: str | None,
+    allow_placeholder_first_name: bool = False,
+) -> tuple[str, str]:
+    """Normalise and validate submitted surname and first name.
+
+    The placeholder is reserved for migrated legacy rows, so it is rejected as input
+    (the event import may keep it as first name of a sheet name that has a single word).
+    Raises ``ValueError`` with a Czech message suitable for flashing.
+    """
+    surname = " ".join((surname_raw or "").split())
+    first_name = " ".join((first_name_raw or "").split())
+    if not surname:
+        raise ValueError("Příjmení nesmí být prázdné.")
+    if not first_name:
+        raise ValueError("Jméno nesmí být prázdné.")
+    if is_name_placeholder(surname):
+        raise ValueError(f"Příjmení nesmí být „{NAME_PLACEHOLDER}“.")
+    if is_name_placeholder(first_name) and not allow_placeholder_first_name:
+        raise ValueError(f"Jméno nesmí být „{NAME_PLACEHOLDER}“.")
+    for label, value in (("Příjmení", surname), ("Jméno", first_name)):
+        error = _name_part_length_error(label, value)
+        if error:
+            raise ValueError(error)
+    return surname, first_name
 
 
 class CalendarView(str, enum.Enum):
@@ -50,7 +118,8 @@ class UserAccount(UserMixin, db.Model):  # type: ignore[misc]
     id = db.Column(db.Uuid, primary_key=True, default=uuid.uuid4)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
-    name = db.Column(db.String(255), nullable=False)
+    surname = db.Column(db.String(255), nullable=False)
+    first_name = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(50), nullable=True)
     is_active = db.Column(db.Boolean, default=False, nullable=False)
     is_archived = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
@@ -183,6 +252,23 @@ class UserAccount(UserMixin, db.Model):  # type: ignore[misc]
         back_populates="coordinator",
         lazy="select",
     )
+
+    @hybrid_property
+    def name(self) -> str:
+        """Displayed name "Příjmení Jméno"; read-only, usable in SQL as well."""
+        return display_name(self.surname, self.first_name)
+
+    @name.inplace.expression
+    @classmethod
+    def _name_expression(cls) -> ColumnElement[str]:
+        return cls.surname + " " + cls.first_name
+
+    @property
+    def initials(self) -> str:
+        """First-name initial followed by surname initial, upper-cased."""
+        first = "" if self.first_name == NAME_PLACEHOLDER else self.first_name
+        letters = [next((ch for ch in part or "" if ch.isalnum()), "") for part in (first, self.surname)]
+        return "".join(letters).upper() or "?"
 
     def regenerate_ical_token(self) -> str:
         """Generate a new iCal subscription token, invalidating the previous one."""

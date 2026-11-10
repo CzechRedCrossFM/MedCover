@@ -31,7 +31,8 @@ def test_invitation_grants_selected_role(app, admin_client, client, external):
     response = client.post(
         f"/auth/register/{token}",
         data={
-            "full_name": "Friendly Collaborator",
+            "surname": "Friendly",
+            "first_name": "Collaborator",
             "password": "testpass123",
             "password2": "testpass123",
             "role": Role.ADMIN,

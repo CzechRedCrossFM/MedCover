@@ -48,7 +48,9 @@ Output JSON schema (v2):
         "users": [
             {
                 "gs_name":       str,   # original "Lastname Firstname" from GS
-                "name":          str,   # same as gs_name — Lastname Firstname convention
+                "name":          str,   # same as gs_name — Lastname Firstname convention;
+                                        # MedCover splits it at the first whitespace into
+                                        # surname / first name (editable in the preview)
                 "email":         str or null,
                 "phone":         str or null,
                 "is_zdravotnik": bool

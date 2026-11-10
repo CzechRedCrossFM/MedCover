@@ -29,6 +29,9 @@ extra columns from an older or newer backup.  This means:
 - Removed columns in the backup are silently skipped.
 - Restoring to a schema that added NOT NULL columns without defaults will
   fail at the DB level — the restore routine surfaces this as an error.
+- User rows from backups taken before the surname/first-name split carry a
+  single ``name``; restore splits it at the first whitespace (a single word
+  becomes the surname and the first name gets the placeholder „(doplnit)“).
 """
 
 import functools
@@ -52,6 +55,7 @@ from azure.storage.blob import ContainerClient, StorageStreamDownloader
 from app.config import check_backup_storage_env
 from app.extensions import db
 from app.models.role import ROLE_PERMISSIONS
+from app.models.user import split_full_name
 
 log = logging.getLogger(__name__)
 
@@ -303,6 +307,14 @@ def delete_backup(name: str) -> None:
     _container().delete_blob(name)
 
 
+def _upgrade_legacy_row(table_name: str, row: dict[str, Any]) -> dict[str, Any]:
+    """Convert a ``user_account`` row that still has a single ``name`` into the split columns."""
+    if table_name != "user_account" or "surname" in row or "name" not in row:
+        return row
+    surname, first_name = split_full_name(row["name"])
+    return {**row, "surname": surname, "first_name": first_name}
+
+
 def restore_from_zip(zip_path: str | Path) -> None:
     """Restore the database from a backup zip file.
 
@@ -425,7 +437,7 @@ def restore_from_zip(zip_path: str | Path) -> None:
             if has_identity:
                 conn.execute(sa.text(f"SET IDENTITY_INSERT {qt} ON"))
             for row in rows:
-                filtered = {k: v for k, v in row.items() if k in current_columns}
+                filtered = {k: v for k, v in _upgrade_legacy_row(table_name, row).items() if k in current_columns}
                 for col_name in binary_cols:
                     val = filtered.get(col_name)
                     if isinstance(val, str):

@@ -140,6 +140,8 @@ When in doubt about the correct Czech UI label or English code name for a concep
 | Placená akce | `paid` (boolean) |
 | Archivovaná | `archived` (boolean) |
 | Popis pozice | `EventSpot.description` |
+| Příjmení | `UserAccount.surname` |
+| Jméno (osoby) | `UserAccount.first_name` |
 | Výchozí zobrazení kalendáře | `preferred_calendar_view` |
 | Pracovní úvazek | Employment type (always "DPP" in výkaz) |
 | Popis činnosti | Activity description (event names column in výkaz) |
@@ -720,6 +722,13 @@ When in doubt about the correct Czech UI label or English code name for a concep
         - Users without a photo get an initials fallback. The assignee's phone is rendered as a `tel:` link containing only digits and `+`.
     - **Privacy note:** Photos and phone numbers of all assignees are visible to everyone who can view the event detail, including External users. This was a deliberate product decision.
     - **Alternatives rejected:** inline `data:` URIs (no caching, bloats HTML); a separate photo table (overkill for 1:1 optional data); reusing `version` as the cache token (every profile edit would invalidate cached photos).
+- AD23 User Name Storage
+    - **Status:** Decided
+    - **Context:** A single free-text name field ("Příjmení Jméno" by convention) was filled in inconsistent order by users, breaking sorting, matching and exports.
+    - **Options considered:** keep one field with stricter help text; store surname and first name and keep a denormalised `name` column; store only surname and first name and compute the display name.
+    - **Decision:** `user_account` stores `surname` and `first_name` (both NOT NULL); `name` is a read-only hybrid property (`surname + ' ' + first_name`) usable in Python and SQL. Every form asks for „Příjmení“ and „Jméno“ separately. Lists order by surname, then first name, in Czech collation; search matches either order.
+    - **Migration of existing data:** split at the first whitespace — first word is the surname, the remainder the first name; a single-word name keeps the word as surname and gets the placeholder „(doplnit)“ as first name for an admin to fix. Restoring an older backup applies the same rule.
+    - **Consequences:** no writes through `name`; Python-level sorts of users must use `person_sort_key(surname, first_name)`; a future directory sync maps `sn` → `surname`, `givenName` → `first_name`.
 
 MedCover is a standard three-tier web application:
 
@@ -929,7 +938,7 @@ erDiagram
 
 | Entity | Key attributes | Notes |
 |---|---|---|
-| **UserAccount** | email, password hash, name, phone, active flag, preferred_calendar_view, optional profile photo | Email = login identifier; accounts inactive until admin-activated |
+| **UserAccount** | email, password hash, surname, first name, phone, active flag, preferred_calendar_view, optional profile photo | Email = login identifier; accounts inactive until admin-activated; displayed as „Příjmení Jméno“ |
 | **Role** | name, description | Pre-defined: Admin, Coordinator, Member, Viewer |
 | **Permission** | code (e.g. `event.create`) | Object-level permissions assigned to roles |
 | **Qualification** | name, description, parent qualifications | Unified model for medical qualifications and training certifications |
@@ -1118,7 +1127,7 @@ Pre-defined roles (see AD01):
 - properties
     - email address - serves as the login identifier; can be changed by admin only
     - password hash - used for authentication; can be changed by the user or admin
-    - name and surname - including title
+    - surname and first name — stored separately, both required (titles are not stored); every display uses the computed „Příjmení Jméno“ form (`UserAccount.name`)
     - phone number
     - roles - list of assigned Roles; assigned by admin only
     - qualifications - list of assigned Qualifications

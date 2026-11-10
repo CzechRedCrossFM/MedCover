@@ -131,7 +131,9 @@ class TestLoginPage:
     def test_login_inactive_user_rejected(self, app, client):
         with app.app_context():
             role = _db.session.scalar(_db.select(Role).where(Role.name == Role.MEMBER))
-            user = UserAccount(email="inactive@example.com", name="Inactive", is_active=False)
+            user = UserAccount(
+                email="inactive@example.com", surname="Inactive", first_name="Testovací", is_active=False
+            )
             user.set_password("testpass123")
             user.roles = [role]
             _db.session.add(user)
@@ -343,7 +345,8 @@ class TestRegisterFlow:
         response = client.post(
             f"/auth/register/{token}",
             data={
-                "full_name": "Nový Uživatel",
+                "surname": "Nový",
+                "first_name": "Uživatel",
                 "password": "securepass99",
                 "password2": "securepass99",
             },
@@ -361,7 +364,7 @@ class TestRegisterFlow:
         token = self._make_invite(app)
         response = client.post(
             f"/auth/register/{token}",
-            data={"full_name": "Test", "password": "short", "password2": "short"},
+            data={"surname": "Test", "first_name": "Testovací", "password": "short", "password2": "short"},
             follow_redirects=True,
         )
         assert response.status_code == 200
@@ -374,7 +377,7 @@ class TestRegisterFlow:
         token = self._make_invite(app)
         response = client.post(
             f"/auth/register/{token}",
-            data={"full_name": "Test", "password": "securepass99", "password2": "different99"},
+            data={"surname": "Test", "first_name": "Testovací", "password": "securepass99", "password2": "different99"},
             follow_redirects=True,
         )
         assert response.status_code == 200
@@ -384,11 +387,11 @@ class TestRegisterFlow:
         token = self._make_invite(app)
         response = client.post(
             f"/auth/register/{token}",
-            data={"full_name": "", "password": "securepass99", "password2": "securepass99"},
+            data={"surname": "", "first_name": "Testovací", "password": "securepass99", "password2": "securepass99"},
             follow_redirects=True,
         )
         assert response.status_code == 200
-        assert "celé jméno".encode() in response.data
+        assert "Příjmení nesmí být prázdné".encode() in response.data
 
 
 class TestResetPassword:
