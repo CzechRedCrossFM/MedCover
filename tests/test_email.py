@@ -45,7 +45,7 @@ from app.models.outbox import OutboxEmail
 from app.models.qualification import Qualification
 from app.models.role import Role
 from app.models.settings import get_settings
-from app.models.user import EventTimeFormat, UserAccount
+from app.models.user import EventTimeFormat, UserAccount, split_full_name
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,7 +71,8 @@ def _make_member_user(email: str = "member@test.cz", name: str = "Test Member") 
     """Create an active Member user (minimum role for operational emails)."""
 
     role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-    user = UserAccount(email=email, name=name, is_active=True)
+    surname, first_name = split_full_name(name)
+    user = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
     user.set_password("pass")
     user.roles = [role]
     db.session.add(user)
@@ -187,7 +188,7 @@ class TestOutboxEnqueue:
         with app.app_context():
             event = _make_event("Test akce")
             viewer_role = db.session.scalar(db.select(Role).where(Role.name == "Viewer"))
-            viewer = UserAccount(email="viewer@test.cz", name="Viewer User", is_active=True)
+            viewer = UserAccount(email="viewer@test.cz", surname="Viewer", first_name="User", is_active=True)
             viewer.set_password("pass")
             viewer.roles = [viewer_role]
             db.session.add(viewer)
@@ -207,7 +208,7 @@ class TestOutboxEnqueue:
             event = _make_event("Test akce")
             viewer_role = db.session.scalar(db.select(Role).where(Role.name == "Viewer"))
             member_role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-            user = UserAccount(email="mixed@test.cz", name="Mixed User", is_active=True)
+            user = UserAccount(email="mixed@test.cz", surname="Mixed", first_name="User", is_active=True)
             user.set_password("pass")
             user.roles = [viewer_role, member_role]
             db.session.add(user)
@@ -646,7 +647,7 @@ def _make_ed_event(delta_hours: float | None = None) -> tuple[UserAccount, Event
     db.session.add(me)
     db.session.flush()
     role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-    user = UserAccount(email="ed_user@test.cz", name="ED User", is_active=True)
+    user = UserAccount(email="ed_user@test.cz", surname="ED", first_name="User", is_active=True)
     user.set_password("x")
     user.roles = [role]
     db.session.add(user)
@@ -856,7 +857,7 @@ class TestEnqueueDeferred:
         with app.app_context():
             user1, event = _make_ed_event(delta_hours=72)
             role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-            user2 = UserAccount(email="ed_user2@test.cz", name="ED User 2", is_active=True)
+            user2 = UserAccount(email="ed_user2@test.cz", surname="ED", first_name="User 2", is_active=True)
             user2.set_password("x")
             user2.roles = [role]
             db.session.add(user2)
@@ -1359,7 +1360,7 @@ class TestEventChangedMerge:
         with app.app_context():
             user1, event = _make_ed_event(delta_hours=72)
             role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-            user2 = UserAccount(email="ec_user2@test.cz", name="EC User 2", is_active=True)
+            user2 = UserAccount(email="ec_user2@test.cz", surname="EC", first_name="User 2", is_active=True)
             user2.set_password("x")
             user2.roles = [role]
             db.session.add(user2)
@@ -1968,10 +1969,10 @@ class TestDrainBatchedOutbox:
         """Two users → exactly one email per drain call, other user's rows still pending."""
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
-            userA = UserAccount(email="userA_b5@test.cz", name="User A", is_active=True)
+            userA = UserAccount(email="userA_b5@test.cz", surname="User", first_name="A", is_active=True)
             userA.set_password("x")
             userA.roles = [role]
-            userB = UserAccount(email="userB_b5@test.cz", name="User B", is_active=True)
+            userB = UserAccount(email="userB_b5@test.cz", surname="User", first_name="B", is_active=True)
             userB.set_password("x")
             userB.roles = [role]
             db.session.add_all([userA, userB])
@@ -2194,7 +2195,7 @@ class TestBatchedSpotQualificationsInEmail:
         with app.app_context():
             user, event = _make_ed_event(delta_hours=72)
             spot = _add_spot(event, "Zapln\u011bn\u00e1 pozice", [])
-            other = UserAccount(email="filler@test.cz", name="Filler", is_active=True)
+            other = UserAccount(email="filler@test.cz", surname="Filler", first_name="Testovací", is_active=True)
             other.set_password("x")
             other.roles = [db.session.scalar(db.select(Role).where(Role.name == "Member"))]
             db.session.add(other)
@@ -2361,7 +2362,7 @@ class TestUnfilledReminderSpotTable:
             _add_spot(event, "Volná doprava", [q_drv])
             # filled mandatory → hidden
             filled = _add_spot(event, "Obsazená pozice", [q_med])
-            other = UserAccount(email="filler2@test.cz", name="Filler", is_active=True)
+            other = UserAccount(email="filler2@test.cz", surname="Filler", first_name="Testovací", is_active=True)
             other.set_password("x")
             other.roles = [db.session.scalar(db.select(Role).where(Role.name == "Member"))]
             db.session.add(other)
@@ -2399,7 +2400,7 @@ class TestUnfilledReminderSpotTable:
         with app.app_context():
             user, event = _make_ed_event(delta_hours=72)
             spot = _add_spot(event, "Jediná pozice", [])
-            other = UserAccount(email="filler3@test.cz", name="Filler", is_active=True)
+            other = UserAccount(email="filler3@test.cz", surname="Filler", first_name="Testovací", is_active=True)
             other.set_password("x")
             other.roles = [db.session.scalar(db.select(Role).where(Role.name == "Member"))]
             db.session.add(other)

@@ -169,7 +169,10 @@ def czech_sort_key(text: str) -> list[int]:
 
     Example::
 
-        users.sort(key=lambda u: czech_sort_key(u.name))
+        events.sort(key=lambda e: czech_sort_key(e.name))
+
+    For people use :func:`person_sort_key`; a joined "Příjmení Jméno" string
+    would sort "Nováková" before "Novák" because a space ranks after letters.
     """
     s = text.lower()
     result: list[int] = []
@@ -182,6 +185,11 @@ def czech_sort_key(text: str) -> list[int]:
             result.append(_CS_RANK.get(s[i], _CS_FALLBACK + ord(s[i])))
             i += 1
     return result
+
+
+def person_sort_key(surname: str, first_name: str) -> tuple[list[int], list[int]]:
+    """Return a Czech sort key ordering people by surname, then first name."""
+    return czech_sort_key(surname), czech_sort_key(first_name)
 
 
 def safe_next(next_url: str | None, fallback: str | None = None) -> str:
@@ -404,17 +412,6 @@ def quick_date_ranges() -> list[tuple[str, str, str]]:
         ("Od začátku roku", ty_from.isoformat(), today.isoformat()),
         ("Celý rok", ty_from.isoformat(), ty_to.isoformat()),
     ]
-
-
-def name_initials(name: str | None) -> str:
-    """Initials of the first and last word of a name; "?" when nothing usable."""
-    words = (name or "").split()
-    picked = words[:1] + words[-1:] if len(words) > 1 else words
-    initials = ""
-    for word in picked:
-        first = next((ch for ch in word if ch.isalnum()), "")
-        initials += first.upper()
-    return initials or "?"
 
 
 def ascii_digits(text: str) -> str:

@@ -27,7 +27,7 @@ from app.profile_photo import (
     photo_token,
     process_profile_photo_upload,
 )
-from app.utils import name_initials, tel_href
+from app.utils import tel_href
 from tests.conftest import _login, _make_event_with_spot, _make_user
 from tests.test_backup import _restore
 from tests.test_external_schema import load_migration
@@ -209,22 +209,6 @@ class TestProfilePhotoPipeline:
 
 
 class TestFilters:
-    @pytest.mark.parametrize(
-        ("name", "expected"),
-        [
-            ("Testovací Rudolf", "TR"),
-            ("Vymyšlený", "V"),
-            ("testovací  rudolf", "TR"),
-            ("„Pepa“ Vymyšlený", "PV"),
-            ("", "?"),
-            (None, "?"),
-            ("  ", "?"),
-            ("Testovací Rudolf Druhý", "TD"),
-        ],
-    )
-    def test_name_initials(self, name: str | None, expected: str) -> None:
-        assert name_initials(name) == expected
-
     @pytest.mark.parametrize(
         ("phone", "expected"),
         [
@@ -612,7 +596,7 @@ class TestEventDetailAssignees:
         event_id, spot_id = _make_event_with_spot(app)
         _assign(app, event_id, spot_id, "a@test.com", "Vymyšlený Jiří", None)
         row = _row_for(_event_html(admin_client, event_id), "Vymyšlený Jiří")
-        assert "<img" not in row and "VJ" in row
+        assert "<img" not in row and "JV" in row
 
     def test_external_viewer_sees_photo_and_phone_but_no_user_link(self, app, external_client) -> None:
         event_id, spot_id = _make_event_with_spot(app)
@@ -839,4 +823,4 @@ class TestProfilePhotoBoundaries:
         event_id, spot_id = _make_event_with_spot(app, name="Prázdná akce")
         _assign(app, event_id, spot_id, "bare@test.com", "Vymyšlený Holý", None, False)
         row = _row_for(_event_html(member_client, event_id), "Vymyšlený Holý")
-        assert "tel:" not in row and "<img" not in row and "VH" in row
+        assert "tel:" not in row and "<img" not in row and "HV" in row

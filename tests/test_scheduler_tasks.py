@@ -26,14 +26,14 @@ def _make_open_event_with_rp(app, start_dt: datetime) -> int:
         db.session.flush()
 
         rp_role = db.session.scalar(db.select(Role).where(Role.name == Role.COORDINATOR))
-        rp = UserAccount(email="rp@test.com", name="RP User", is_active=True)
+        rp = UserAccount(email="rp@test.com", surname="RP", first_name="User", is_active=True)
         rp.set_password("testpass123")
         rp.roles = [rp_role]
         db.session.add(rp)
         db.session.flush()
 
         creator_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-        creator = UserAccount(email="creator_sched@test.com", name="Creator", is_active=True)
+        creator = UserAccount(email="creator_sched@test.com", surname="Creator", first_name="Testovací", is_active=True)
         creator.set_password("testpass123")
         creator.roles = [creator_role]
         db.session.add(creator)

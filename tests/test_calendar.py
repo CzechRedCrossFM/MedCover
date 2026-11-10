@@ -23,7 +23,7 @@ def _make_member(app, email: str = "ical_member@test.com") -> object:
     with app.app_context():
 
         role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-        user = UserAccount(email=email, name="iCal Member", is_active=True)
+        user = UserAccount(email=email, surname="iCal", first_name="Member", is_active=True)
         user.set_password("testpass123")
         user.roles = [role]
         db.session.add(user)
@@ -179,7 +179,7 @@ def _make_member_with_all_token(app, email: str = "ical_all@test.com") -> tuple[
     with app.app_context():
 
         role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-        user = UserAccount(email=email, name="iCal All Member", is_active=True)
+        user = UserAccount(email=email, surname="iCal", first_name="All Member", is_active=True)
         user.set_password("testpass123")
         user.roles = [role]
         db.session.add(user)
@@ -198,7 +198,9 @@ class TestICalFeedArchivedExclusion:
             db.session.flush()
 
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="archived_creator@test.com", name="Creator", is_active=True)
+            creator = UserAccount(
+                email="archived_creator@test.com", surname="Creator", first_name="Testovací", is_active=True
+            )
             creator.set_password("x")
             creator.roles = [role]
             db.session.add(creator)
@@ -273,7 +275,9 @@ class TestICalAllEventsFeed:
             db.session.flush()
 
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="all_archived_creator@test.com", name="Creator", is_active=True)
+            creator = UserAccount(
+                email="all_archived_creator@test.com", surname="Creator", first_name="Testovací", is_active=True
+            )
             creator.set_password("x")
             creator.roles = [role]
             db.session.add(creator)

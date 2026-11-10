@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros/person_name.html' import name_inputs %}
 {% block title %}Registrace — MedCover{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
@@ -9,10 +10,7 @@
         <p class="text-muted small text-center mb-4">Pozvánka pro: <strong>{{ invite.email }}</strong></p>
         <form method="POST" novalidate>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="mb-3">
-            <label for="full_name" class="form-label">Celé jméno <small class="text-muted fw-normal">(Příjmení Jméno)</small></label>
-            <input type="text" class="form-control" id="full_name" name="full_name" placeholder="Novák Jan" autofocus required>
-          </div>
+          {{ name_inputs(request.form.get('surname', ''), request.form.get('first_name', ''), autofocus=true) }}
           <div class="mb-3">
             <label for="password" class="form-label">Heslo</label>
             <input type="password" class="form-control" id="password" name="password" required minlength="{{ min_password_length }}">

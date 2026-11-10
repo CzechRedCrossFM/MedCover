@@ -14,7 +14,7 @@ from app.mail import _base_context, _enqueue, send_account_activated
 from app.models.audit import AuditLogEntry
 from app.models.invite import RegistrationInvite
 from app.models.role import Role
-from app.models.user import UserAccount
+from app.models.user import UserAccount, parse_name_parts
 from app.utils import commit_or_stale, diff_changes, external_url_for, safe_next
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -209,12 +209,18 @@ def register(token: str) -> str | Response:
         db.session.commit()
 
     if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
         password = request.form.get("password", "")
         password2 = request.form.get("password2", "")
 
-        if not full_name:
-            flash("Zadejte celé jméno.", "warning")
+        try:
+            surname, first_name = parse_name_parts(request.form.get("surname"), request.form.get("first_name"))
+            name_error = None
+        except ValueError as exc:
+            surname = first_name = ""
+            name_error = str(exc)
+
+        if name_error:
+            flash(name_error, "warning")
         elif len(password) < MIN_PASSWORD_LENGTH:
             flash(f"Heslo musí mít alespoň {MIN_PASSWORD_LENGTH} znaků.", "warning")
 
@@ -223,7 +229,7 @@ def register(token: str) -> str | Response:
         elif db.session.scalar(db.select(UserAccount).where(UserAccount.email == invite.email)):
             flash("Účet s tímto e-mailem již existuje.", "danger")
         else:
-            user = UserAccount(email=invite.email, name=full_name, is_active=True)
+            user = UserAccount(email=invite.email, surname=surname, first_name=first_name, is_active=True)
             user.set_password(password)
             db.session.add(user)
             user.qualifications = [
@@ -241,7 +247,7 @@ def register(token: str) -> str | Response:
                     action_type="complete",
                     entity_type="RegistrationInvite",
                     entity_id=str(invite.id),
-                    summary=f"Registrace dokončena pro {invite.email} jako '{full_name}'",
+                    summary=f"Registrace dokončena pro {invite.email} jako „{user.name}“",
                     changes_json=diff_changes(
                         {"qualifications": []},
                         {"qualifications": [qualification.name for qualification in user.qualifications]},

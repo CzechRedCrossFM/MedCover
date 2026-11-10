@@ -19,7 +19,9 @@ from app.routes import dev, register_blueprints
 @pytest.mark.parametrize("enabled", [False, True])
 def test_external_dev_account_button_and_login(monkeypatch, enabled):
     account = next(account for account in dev.DEV_ACCOUNTS if account["role"] == "external")
-    user = UserAccount(id=uuid4(), email=account["email"], name=account["name"], is_active=True)
+    user = UserAccount(
+        id=uuid4(), email=account["email"], surname=account["surname"], first_name=account["first_name"], is_active=True
+    )
     user.roles = [Role(name=Role.EXTERNAL)]
     app = Flask(__name__)
     app.config.update(SECRET_KEY="dev-login-test", DEV_LOGIN_ENABLED=enabled, TESTING=True)

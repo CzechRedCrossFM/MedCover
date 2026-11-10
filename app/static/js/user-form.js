@@ -1,4 +1,4 @@
-/* Phone, email, name and password field validation — used on user detail, profile and create pages. */
+/* Phone, email, name (surname + first name) and password field validation — used on user detail, profile and create pages. */
 (function () {
   var PHONE_RE = /^\d{9}$|^(\+|00)\d{10,15}$/;
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -57,8 +57,9 @@
   var emailInput = attach('edit_email', validateEmail) ||
                    attach('create_email', validateEmail);
 
-  var nameInput  = attach('edit_name', validateName) ||
-                   attach('create_name', validateName);
+  var nameInputs = ['edit_surname', 'edit_first_name', 'create_surname', 'create_first_name', 'surname', 'first_name']
+    .map(function (id) { return attach(id, validateName); })
+    .filter(function (el) { return el && !el.disabled; });
 
   var pwInput    = attach('new_password', validatePassword);
 
@@ -81,7 +82,7 @@
   if (form) {
     form.addEventListener('submit', function (e) {
       var ok = true;
-      if (nameInput  && !validateName(nameInput))    ok = false;
+      nameInputs.forEach(function (input) { if (!validateName(input)) ok = false; });
       if (emailInput && !validateEmail(emailInput))  ok = false;
       if (phoneInput && !validatePhone(phoneInput))  ok = false;
       if (pwInput    && !validatePassword(pwInput))  ok = false;

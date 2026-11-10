@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros/person_name.html' import name_inputs %}
 {% from 'macros/help.html' import help_icon %}
 {% from 'macros/people.html' import avatar with context %}
 {% from 'macros/badges.html' import badge_warning, badge_secondary %}
@@ -99,13 +100,7 @@
         </div>
         <div class="card-body">
           {% if current_user.has_permission('user.edit_any') %}
-          <div class="mb-3">
-            <label class="form-label" for="edit_name">Celé jméno <small class="text-muted fw-normal">(Příjmení Jméno)</small>
-              {{ help_icon("Zadejte nejdříve příjmení, pak jméno — např. Novák Jan. Tento formát se zobrazuje ve všech přehledech a výkazech.") }}
-            </label>
-            <input class="form-control" type="text" id="edit_name" name="name"
-                   value="{{ user.name }}" placeholder="Novák Jan" required>
-          </div>
+          {{ name_inputs(user.surname, user.first_name, id_prefix="edit_") }}
           <div class="mb-3">
             <label class="form-label" for="edit_email">E-mail
               {{ help_icon("Přihlašovací e-mail uživatele. Musí být unikátní v celém systému.") }}

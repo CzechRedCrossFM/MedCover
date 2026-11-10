@@ -25,7 +25,7 @@ def _make_event(app, status: EventStatus, end_offset_hours: int = -1) -> int:
         db.session.flush()
 
         creator_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-        creator = UserAccount(email="sched_creator@test.com", name="Sched Creator", is_active=True)
+        creator = UserAccount(email="sched_creator@test.com", surname="Sched", first_name="Creator", is_active=True)
         creator.set_password("testpass123")
         creator.roles = [creator_role]
         db.session.add(creator)

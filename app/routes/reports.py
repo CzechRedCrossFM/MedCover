@@ -47,10 +47,10 @@ from app.external_collaborators import external_visible_event_ids, filter_extern
 from app.models.assignment import Assignment
 from app.models.event import Event, EventSpot, EventStatus
 from app.models.master_event import MasterEvent
-from app.models.user import UserAccount
+from app.models.user import UserAccount, display_name
 from app.printout_generator import generate_printout
 from app.queries import active_master_events_list, active_users_list
-from app.utils import czech_sort_key, get_app_tz, quick_date_ranges, require_permission
+from app.utils import get_app_tz, person_sort_key, quick_date_ranges, require_permission
 from app.xlsx import HOURS_FORMAT, Column, TableSheet, build_workbook
 
 reports_bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -129,7 +129,7 @@ def _build_user_stat_rows(pairs: list[tuple[Assignment, Event]], now: datetime) 
         user_pairs[uid].append((asgn, ev))
     result = [(users[uid], _compute_user_stats(up, now)) for uid, up in user_pairs.items()]
     _resolve_next_shifts(result, now)
-    result.sort(key=lambda x: czech_sort_key(x[0].name))
+    result.sort(key=lambda x: person_sort_key(x[0].surname, x[0].first_name))
     return result
 
 
@@ -801,7 +801,7 @@ def _work_summary_data(from_dt: datetime, to_dt: datetime) -> list[WorkSummaryGr
     # One row per assigned person per event. Someone holding two spots on the
     # same event must not have their hours counted twice, hence the DISTINCT.
     assignment_query = (
-        db.select(Assignment.user_id, UserAccount.name, Assignment.event_id)
+        db.select(Assignment.user_id, UserAccount.surname, UserAccount.first_name, Assignment.event_id)
         .join(Event, Assignment.event_id == Event.id)
         .join(UserAccount, Assignment.user_id == UserAccount.id)
         .where(*date_filter)
@@ -813,16 +813,18 @@ def _work_summary_data(from_dt: datetime, to_dt: datetime) -> list[WorkSummaryGr
 
     now = datetime.now(timezone.utc)
     groups: dict[uuid.UUID, WorkSummaryGroup] = {}
-    for user_id, user_name, event_id in assignments:
+    sort_keys: dict[uuid.UUID, tuple[list[int], list[int]]] = {}
+    for user_id, surname, first_name, event_id in assignments:
+        user_name = display_name(surname, first_name)
         row = _work_summary_row(user_name, events[event_id], now)
         group = groups.get(user_id)
         if group is None:
             group = groups[user_id] = WorkSummaryGroup(total=WorkSummaryTotal(user_name=user_name), rows=[])
+            sort_keys[user_id] = person_sort_key(surname, first_name)
         group.rows.append(row)
         group.total.add(row)
 
-    result = list(groups.values())
-    result.sort(key=lambda g: czech_sort_key(g.total.user_name))
+    result = [groups[user_id] for user_id in sorted(groups, key=sort_keys.__getitem__)]
     for group in result:
         group.rows.sort(key=lambda r: (r.start_datetime, r.event_name))
     return result

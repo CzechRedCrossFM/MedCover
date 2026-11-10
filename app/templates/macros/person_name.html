@@ -1,0 +1,35 @@
+{#
+  name_inputs(surname, first_name, id_prefix, wrapper_class, disabled, autofocus, required_marker, help)
+  help defaults to the standard display-name hint; pass help="" to hide it.
+  A stored placeholder is rendered as an empty value (placeholder hint only) so required blocks submit.
+  Renders the two person-name inputs (Příjmení, Jméno) in that order.
+  Disabled inputs carry no name attribute, so nothing is posted for them.
+
+  Usage:
+    {% from 'macros/person_name.html' import name_inputs %}
+    {{ name_inputs(user.surname, user.first_name, id_prefix="edit_") }}
+#}
+{% from 'macros/help.html' import help_icon %}
+{% set default_help = "Příjmení a jméno se zobrazují ve všech přehledech a výkazech jako „Příjmení Jméno“." %}
+{% macro name_inputs(surname='', first_name='', id_prefix='', wrapper_class='mb-3', disabled=false, autofocus=false, required_marker=false, help=default_help) %}
+{% set blank_surname = not disabled and surname == name_placeholder %}
+{% set blank_first_name = not disabled and first_name == name_placeholder %}
+<div class="{{ wrapper_class }}">
+  <label class="form-label" for="{{ id_prefix }}surname">Příjmení{% if required_marker %} <span class="text-danger">*</span>{% endif %}
+    {% if help %}{{ help_icon(help) }}{% endif %}
+  </label>
+  <input type="text" class="form-control" id="{{ id_prefix }}surname"
+         {% if not disabled %}name="surname" required{% else %}disabled{% endif %}
+         value="{{ '' if blank_surname else surname }}" placeholder="{{ name_placeholder if blank_surname else 'Novák' }}" maxlength="{{ name_part_max_length }}"
+         autocomplete="family-name"{% if autofocus and not disabled %} autofocus{% endif %}>
+  <div class="invalid-feedback">Příjmení nesmí být prázdné.</div>
+</div>
+<div class="{{ wrapper_class }}">
+  <label class="form-label" for="{{ id_prefix }}first_name">Jméno{% if required_marker %} <span class="text-danger">*</span>{% endif %}</label>
+  <input type="text" class="form-control" id="{{ id_prefix }}first_name"
+         {% if not disabled %}name="first_name" required{% else %}disabled{% endif %}
+         value="{{ '' if blank_first_name else first_name }}" placeholder="{{ name_placeholder if blank_first_name else 'Jan' }}" maxlength="{{ name_part_max_length }}"
+         autocomplete="given-name">
+  <div class="invalid-feedback">Jméno nesmí být prázdné.</div>
+</div>
+{% endmacro %}

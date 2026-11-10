@@ -138,13 +138,14 @@ QUALIFICATION_NAMES = {
     "Řidič": "Řidič sanitky",
     "Lektor": "Lektor",
 }
-# (name, e-mail, qualifications): the dev accounts cover every role, these cover the remaining qualifications
+# (surname, first name, e-mail, qualifications): the dev accounts cover every role,
+# these cover the remaining qualifications
 SYNTHETIC_MEMBERS = (
-    ("Kučera Tomáš", "tomas.kucera@medcover.local", ("Zelenáč",)),
-    ("Veselá Eva", "eva.vesela@medcover.local", ("Zdravotník",)),
-    ("Vymyšlený Jiří", "jiri.vymysleny@medcover.local", ("Záchranář",)),
-    ("Hájková Lucie", "lucie.hajkova@medcover.local", ("Lékař",)),
-    ("Fiala Adam", "adam.fiala@medcover.local", ("Lektor", "Zelenáč")),
+    ("Pomyslný", "Tomáš", "tomas.pomyslny@medcover.local", ("Zelenáč",)),
+    ("Smyšlená", "Eliška", "eliska.smyslena@medcover.local", ("Zdravotník",)),
+    ("Vymyšlený", "Zdeněk", "zdenek.vymysleny@medcover.local", ("Záchranář",)),
+    ("Nereálná", "Lucie", "lucie.nerealna@medcover.local", ("Lékař",)),
+    ("Imaginární", "Adam", "adam.imaginarni@medcover.local", ("Lektor", "Zelenáč")),
 )
 
 EQUIPMENT_TYPES = (
@@ -258,7 +259,8 @@ def seed_reference() -> None:
             continue
         user = UserAccount(
             email=email,
-            name=account_def["name"],
+            surname=account_def["surname"],
+            first_name=account_def["first_name"],
             is_active=(account_def["role"] != "inactive"),
         )
         user.set_password(DEV_PASSWORD)
@@ -457,8 +459,8 @@ def plan_events(today: date, rng: random.Random) -> list[dict[str, Any]]:
 
 def _generate_users(password_hash: str, roles: dict[str, Role], quals: dict[str, Qualification]) -> list[UserAccount]:
     users = []
-    for name, email, qual_names in SYNTHETIC_MEMBERS:
-        user = UserAccount(email=email, name=name, is_active=True)
+    for surname, first_name, email, qual_names in SYNTHETIC_MEMBERS:
+        user = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
         user.password_hash = password_hash
         user.roles = [roles["Member"]]
         user.qualifications = [quals[n] for n in qual_names]
@@ -565,7 +567,7 @@ def seed_bulk(today: date) -> None:
     coordinator = _dev_user("coordinator")
     member = _dev_user("member")
 
-    hasher = UserAccount(email="hash@medcover.local", name="hash")
+    hasher = UserAccount(email="hash@medcover.local", surname="Hash", first_name="Hash")
     hasher.set_password(DEV_PASSWORD)
     users = _generate_users(hasher.password_hash, roles, quals)
     db.session.add_all(users)

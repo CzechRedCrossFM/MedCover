@@ -76,7 +76,7 @@ class TestUserPassword:
     """Tests for set_password / check_password model methods."""
 
     def _make_unsaved_user(self) -> UserAccount:
-        user = UserAccount(email="pw@test.com", name="PW User", is_active=True)
+        user = UserAccount(email="pw@test.com", surname="PW", first_name="User", is_active=True)
         return user
 
     def test_set_and_check_password_correct(self):
@@ -159,7 +159,9 @@ class TestEventStaffingStatus:
         with app.app_context():
             spots = db.session.scalars(db.select(EventSpot).where(EventSpot.event_id == event_id)).all()
             for spot in spots[:count]:
-                u = UserAccount(email=f"fill_{spot.id}@test.com", name="Filler", is_active=True)
+                u = UserAccount(
+                    email=f"fill_{spot.id}@test.com", surname="Filler", first_name="Testovací", is_active=True
+                )
                 u.set_password("x")
                 db.session.add(u)
                 db.session.flush()
@@ -236,7 +238,7 @@ class TestOptionalFilledSpotsProperty:
             db.session.flush()
 
             def _fill(spot: EventSpot, tag: str) -> None:
-                u = UserAccount(email=f"{tag}_{spot.id}@test.com", name="F", is_active=True)
+                u = UserAccount(email=f"{tag}_{spot.id}@test.com", surname="F", first_name="Testovací", is_active=True)
                 u.set_password("x")
                 db.session.add(u)
                 db.session.flush()
@@ -337,7 +339,7 @@ class TestEventMiscProperties:
             spot = EventSpot(event_id=event.id, is_optional=False)
             db.session.add(spot)
             db.session.flush()
-            u = UserAccount(email="filler@test.com", name="F", is_active=True)
+            u = UserAccount(email="filler@test.com", surname="F", first_name="Testovací", is_active=True)
             u.set_password("x")
             db.session.add(u)
             db.session.flush()
@@ -436,7 +438,7 @@ class TestEventMiscProperties:
             spot = EventSpot(event_id=event.id)
             spot.required_qualifications = [qual]
             db.session.add(spot)
-            u = UserAccount(email="noqual@test.com", name="NoQual", is_active=True)
+            u = UserAccount(email="noqual@test.com", surname="NoQual", first_name="Testovací", is_active=True)
             u.set_password("x")
             db.session.add(u)
             db.session.commit()

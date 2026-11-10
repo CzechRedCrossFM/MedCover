@@ -26,7 +26,8 @@ def test_create_rejects_external_with_any_other_role(app, admin_client, other_ro
         selected = role_ids(Role.EXTERNAL, other_role)
         before = user_audits()
     response = admin_client.post(
-        "/users/create", data={"name": "Exclusive Target", "email": "target@test.com", "role_ids": selected}
+        "/users/create",
+        data={"surname": "Exclusive", "first_name": "Target", "email": "target@test.com", "role_ids": selected},
     )
     assert response.status_code == 200
     assert "Role External nesmí být kombinována" in response.get_data(as_text=True)
@@ -44,7 +45,8 @@ def test_invalid_edit_rolls_back_info_roles_and_audit(app, admin_client):
     response = admin_client.post(
         f"/users/{user_id}/save",
         data={
-            "name": "Changed Target",
+            "surname": "Changed",
+            "first_name": "Target",
             "email": "changed@test.com",
             "phone": "123456789",
             "new_password": "changedpass123",
@@ -94,7 +96,13 @@ def test_explicit_edit_can_switch_role_sets(app, admin_client, before_roles, aft
     assert (
         admin_client.post(
             f"/users/{user_id}/save",
-            data={"name": "Exclusive Target", "email": "target@test.com", "role_ids": selected, "version": version},
+            data={
+                "surname": "Exclusive",
+                "first_name": "Target",
+                "email": "target@test.com",
+                "role_ids": selected,
+                "version": version,
+            },
         ).status_code
         == 302
     )
@@ -160,7 +168,8 @@ def test_manual_create_accepts_external_alone(app, admin_client):
     with app.app_context():
         selected = role_ids(Role.EXTERNAL)
     response = admin_client.post(
-        "/users/create", data={"name": "Exclusive Target", "email": "target@test.com", "role_ids": selected}
+        "/users/create",
+        data={"surname": "Exclusive", "first_name": "Target", "email": "target@test.com", "role_ids": selected},
     )
     assert response.status_code == 302
     with app.app_context():

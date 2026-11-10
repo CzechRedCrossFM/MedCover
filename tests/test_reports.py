@@ -127,7 +127,7 @@ class TestUserReport:
         """A user with no roles (no report.view) cannot view another user's report."""
         with app.app_context():
             # Create user with no roles (no report.view)
-            norole = UserAccount(email="norole@test.com", name="No Role", is_active=True)
+            norole = UserAccount(email="norole@test.com", surname="No", first_name="Role", is_active=True)
             norole.set_password("testpass123")
             db.session.add(norole)
             other = _make_user("other_norole@test.com", "Other User", Role.MEMBER)
@@ -140,7 +140,7 @@ class TestUserReport:
     def test_user_without_permission_can_access_own_report(self, app, client):
         """A user with no roles can still view their own report."""
         with app.app_context():
-            norole = UserAccount(email="norole_own@test.com", name="No Role Own", is_active=True)
+            norole = UserAccount(email="norole_own@test.com", surname="No", first_name="Role Own", is_active=True)
             norole.set_password("testpass123")
             db.session.add(norole)
             db.session.commit()

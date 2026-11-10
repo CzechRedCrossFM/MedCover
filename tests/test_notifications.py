@@ -287,7 +287,8 @@ class TestEventChangedNotification:
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             user = UserAccount(
                 email="member_notify_test@example.com",
-                name="Test Member",
+                surname="Test",
+                first_name="Member",
                 is_active=True,
             )
             user.set_password("testpass")
@@ -330,7 +331,8 @@ class TestEventChangedNotification:
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             user = UserAccount(
                 email="member_notify_disabled@example.com",
-                name="Test Member 2",
+                surname="Test",
+                first_name="Member 2",
                 is_active=True,
             )
             user.set_password("testpass")
@@ -390,7 +392,7 @@ def _make_event_for_test(app):
         db.session.add(me)
         db.session.flush()
         role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-        user = UserAccount(email="tnr_creator@test.cz", name="TNR Creator", is_active=True)
+        user = UserAccount(email="tnr_creator@test.cz", surname="TNR", first_name="Creator", is_active=True)
         user.set_password("x")
         user.roles = [role]
         db.session.add(user)

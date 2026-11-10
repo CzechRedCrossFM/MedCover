@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import sqlalchemy as sa
-from sqlalchemy import collate, func
+from sqlalchemy import collate, func, or_
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -30,6 +30,24 @@ from app.models.user import UserAccount
 from app.utils import CS_COLLATION
 
 
+def user_name_order(*, descending: bool = False) -> tuple[sa.ColumnElement, sa.ColumnElement]:
+    """Return ORDER BY terms sorting users by surname, then first name (Czech collation)."""
+    surname = collate(UserAccount.surname, CS_COLLATION)
+    first_name = collate(UserAccount.first_name, CS_COLLATION)
+    if descending:
+        return surname.desc(), first_name.desc()
+    return surname.asc(), first_name.asc()
+
+
+def user_name_matches(q: str) -> sa.ColumnElement[bool]:
+    """Return a filter matching *q* against "Příjmení Jméno" and "Jméno Příjmení"."""
+    pattern = f"%{q}%"
+    return or_(
+        UserAccount.name.like(pattern),
+        (UserAccount.first_name + " " + UserAccount.surname).like(pattern),
+    )
+
+
 def active_users_query():  # type: ignore[no-untyped-def]
     """Return a :class:`Select` for active, non-archived users ordered by name.
 
@@ -40,7 +58,7 @@ def active_users_query():  # type: ignore[no-untyped-def]
         db.select(UserAccount)
         .where(UserAccount.is_active == sa.true())
         .where(UserAccount.is_archived == sa.false())
-        .order_by(collate(UserAccount.name, CS_COLLATION))
+        .order_by(*user_name_order())
     )
 
 
@@ -65,9 +83,7 @@ def rp_eligible_users_list() -> list[UserAccount]:
         .subquery()
     )
     rows = db.session.scalars(
-        db.select(UserAccount)
-        .where(UserAccount.id.in_(db.select(eligible_ids.c.id)))
-        .order_by(collate(UserAccount.name, CS_COLLATION))
+        db.select(UserAccount).where(UserAccount.id.in_(db.select(eligible_ids.c.id))).order_by(*user_name_order())
     ).all()
     return list(rows)
 

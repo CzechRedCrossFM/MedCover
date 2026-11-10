@@ -10,7 +10,7 @@
 {%- if user.has_profile_photo -%}
 <img src="{{ url_for('users.photo', user_id=user.id, v=user.profile_photo_token) }}" width="{{ px }}" height="{{ px }}" loading="lazy" alt="{{ alt }}" class="avatar avatar-{{ size }}">
 {%- else -%}
-<span class="avatar avatar-{{ size }} avatar-initials" aria-hidden="true">{{ user.name | initials }}</span>
+<span class="avatar avatar-{{ size }} avatar-initials" aria-hidden="true">{{ user.initials }}</span>
 {%- endif -%}
 {% endmacro %}
 
