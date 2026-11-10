@@ -13,6 +13,8 @@
  *        data-can-open-assignments="1|0">
  *   </div>
  *
+ * The status/type filter selection is kept in localStorage across reloads.
+ *
  * CSRF token is injected automatically by csrfFetch() (csrf-fetch.js).
  */
 (function () {
@@ -56,7 +58,11 @@
   var canOpenAssignments = cfg.dataset.canOpenAssignments === "1";
 
   // ── Client-side status + type filters ──────────────────────────────────────
-  var DEFAULT_STATUSES = ["DRAFT", "PUBLISHED", "ASSIGNMENTS_OPEN", "ASSIGNMENTS_CLOSED"];
+  var FILTER_STORAGE_KEY = "medcover_tm_filters";
+  var FILTER_BARS = [
+    {selector: "#tm-status-filter", attr: "filterStatus", key: "statuses"},
+    {selector: "#tm-type-filter", attr: "filterType", key: "types"}
+  ];
   var allRows = document.querySelectorAll("#tm-table tbody tr[data-event-id]");
   var spotHeaderCols = document.querySelectorAll(".tm-spot-header-col");
   var totalSpotCols = spotHeaderCols.length;
@@ -68,6 +74,59 @@
     });
     return active;
   }
+
+  // Snapshot of every filter button's state: {statuses: {CODE: bool}, types: {...}}
+  function readFilterState() {
+    var state = {};
+    FILTER_BARS.forEach(function (bar) {
+      var map = {};
+      document.querySelectorAll(bar.selector + " .filter-btn").forEach(function (btn) {
+        map[btn.dataset[bar.attr]] = btn.classList.contains("active");
+      });
+      state[bar.key] = map;
+    });
+    return state;
+  }
+
+  // A button without a stored true/false (e.g. a newly added status) keeps its state.
+  function setFilterState(state) {
+    FILTER_BARS.forEach(function (bar) {
+      var map = (state && state[bar.key]) || {};
+      document.querySelectorAll(bar.selector + " .filter-btn").forEach(function (btn) {
+        var value = map[btn.dataset[bar.attr]];
+        if (typeof value === "boolean") btn.classList.toggle("active", value);
+      });
+    });
+  }
+
+  function loadStoredFilters() {
+    try {
+      return JSON.parse(window.localStorage.getItem(FILTER_STORAGE_KEY));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveFilters() {
+    try {
+      window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(readFilterState()));
+    } catch (e) {
+      // Storage unavailable: the filter simply is not remembered.
+    }
+  }
+
+  function clearStoredFilters() {
+    try {
+      window.localStorage.removeItem(FILTER_STORAGE_KEY);
+    } catch (e) {
+      // Storage unavailable: nothing to clear.
+    }
+  }
+
+  // Defaults come from the template's initial "active" classes; snapshot
+  // before restoring the saved selection.
+  var defaultFilterState = readFilterState();
+  setFilterState(loadStoredFilters());
 
   function applyFilters() {
     var activeStatuses = getActiveFilters("#tm-status-filter", "filterStatus");
@@ -114,6 +173,7 @@
     document.querySelectorAll(containerSelector + " .filter-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         btn.classList.toggle("active");
+        saveFilters();
         applyFilters();
       });
     });
@@ -125,18 +185,13 @@
   var resetBtn = document.getElementById("tm-filter-reset");
   if (resetBtn) {
     resetBtn.addEventListener("click", function () {
-      document.querySelectorAll("#tm-status-filter .filter-btn").forEach(function (btn) {
-        var isDefault = DEFAULT_STATUSES.indexOf(btn.dataset.filterStatus) !== -1;
-        btn.classList.toggle("active", isDefault);
-      });
-      document.querySelectorAll("#tm-type-filter .filter-btn").forEach(function (btn) {
-        btn.classList.add("active");
-      });
+      setFilterState(defaultFilterState);
+      clearStoredFilters();
       applyFilters();
     });
   }
 
-  // Apply default filters on page load
+  // Apply the (restored or default) filters on page load
   applyFilters();
 
   // ── Error toast close button ────────────────────────────────────────────────
