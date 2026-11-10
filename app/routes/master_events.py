@@ -412,7 +412,9 @@ def table_manager(me_id: int) -> str:
     me = get_or_404(MasterEvent, me_id)
 
     events = db.session.scalars(
-        db.select(Event).where(Event.master_event_id == me_id).order_by(Event.start_datetime)
+        db.select(Event)
+        .where(Event.master_event_id == me_id, Event.archived == sa.false())
+        .order_by(Event.start_datetime)
     ).all()
 
     rows, max_spot_cols = _build_table_rows(list(events))
