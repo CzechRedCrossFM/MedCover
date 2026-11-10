@@ -30,20 +30,31 @@ document.addEventListener("DOMContentLoaded", function () {
   // data-confirm on forms (submit) and buttons (click). Guard prevents a
   // single physical click that dispatches multiple events (macOS trackpads,
   // some assistive tech) from popping the confirm dialog more than once.
+  // If the confirmed submission is then cancelled (native validation, a
+  // submit listener calling preventDefault), the guard is reset so the user
+  // can retry.
   document.querySelectorAll("form[data-confirm]").forEach(function (form) {
     form.addEventListener("submit", function (e) {
       if (!guardedConfirm(form, form.dataset.confirm)) {
         e.preventDefault();
         return;
       }
-      form.querySelectorAll("button[type=submit], button:not([type])").forEach(function (b) {
-        b.disabled = true;
-      });
+      form.querySelectorAll("button[type=submit], button:not([type])").forEach(disableForConfirm);
+      releaseGuardIfSubmitCancelled(form, form, e);
     });
   });
   document.querySelectorAll("button[data-confirm]").forEach(function (btn) {
     btn.addEventListener("click", function (e) {
-      if (!guardedConfirm(btn, btn.dataset.confirm)) e.preventDefault();
+      var form = btn.form;
+      var submits = form && btn.type === "submit";
+      // Let the browser show its own validation bubble instead of asking
+      // for confirmation of a form that cannot be submitted anyway.
+      if (submits && !form.noValidate && !btn.formNoValidate && !form.checkValidity()) return;
+      if (!guardedConfirm(btn, btn.dataset.confirm)) {
+        e.preventDefault();
+        return;
+      }
+      if (submits) releaseGuardIfSubmitCancelled(btn, form);
     });
   });
 
@@ -86,10 +97,57 @@ function guardedConfirm(el, message) {
   return accepted;
 }
 
-/* Clear a guard set by guardedConfirm, e.g. after an async failure. */
+/* Clear a guard set by guardedConfirm, e.g. after an async failure or a
+ * cancelled submission. */
 function clearGuardedConfirm(el) {
   delete el.dataset.confirmed;
 }
+
+/* Disable a button as part of a confirmed submission. The marker attribute
+ * lets the guard re-enable exactly these buttons later, without touching
+ * buttons that were disabled by the server or by page logic. */
+function disableForConfirm(btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.dataset.confirmDisabled = "1";
+}
+
+/* Re-enable buttons under root that disableForConfirm disabled. */
+function releaseConfirmDisabled(root) {
+  root.querySelectorAll("[data-confirm-disabled]").forEach(function (el) {
+    el.disabled = false;
+    delete el.dataset.confirmDisabled;
+  });
+}
+
+/* After guardedConfirm(guardEl, ...) was accepted for a submission of form,
+ * reset the guard unless the submission went ahead. submitEvent is the submit
+ * event being handled, or omitted when called from a click handler (the
+ * submit event, if any, is still to come).
+ *
+ * The check is deferred to the next task: native validation can block the
+ * submission without any submit event, and submit listeners that run after
+ * ours may still call preventDefault, so only after the whole dispatch is the
+ * outcome known. */
+function releaseGuardIfSubmitCancelled(guardEl, form, submitEvent) {
+  var seen = submitEvent || null;
+  function record(e) { seen = e; }
+  if (!seen) form.addEventListener("submit", record, true);
+  setTimeout(function () {
+    form.removeEventListener("submit", record, true);
+    if (seen && !seen.defaultPrevented) return;
+    clearGuardedConfirm(guardEl);
+    releaseConfirmDisabled(form);
+  }, 0);
+}
+
+/* A page restored from the back/forward cache keeps the state of an earlier
+ * confirmed submission; start it fresh. */
+window.addEventListener("pageshow", function (e) {
+  if (!e.persisted) return;
+  document.querySelectorAll("[data-confirmed]").forEach(clearGuardedConfirm);
+  releaseConfirmDisabled(document);
+});
 
 /* Set a flatpickr field to the current date/time.
  * Called by the "Teď" button placed inside the same .input-group wrapper. */

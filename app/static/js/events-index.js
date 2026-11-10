@@ -235,7 +235,7 @@
     var actionLabels = { publish: "Zveřejnit", open_assignments: "Otevřít přihlášky", cancel: "Zrušit" };
     var label = actionLabels[action] || action;
     if (!guardedConfirm(form, "Akce: " + label + "\nPočet vybraných akcí: " + ids.length + "\n\nPokračovat?")) return;
-    document.querySelectorAll("[data-bulk-action]").forEach(function (b) { b.disabled = true; });
+    document.querySelectorAll("[data-bulk-action]").forEach(disableForConfirm);
     document.getElementById("bulk-action-input").value = action;
     var container = document.getElementById("bulk-ids-container");
     container.innerHTML = "";

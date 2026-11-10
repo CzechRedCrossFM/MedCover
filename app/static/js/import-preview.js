@@ -54,7 +54,8 @@ document.addEventListener("DOMContentLoaded", function () {
         e.preventDefault();
         return;
       }
-      if (btnImport) btnImport.disabled = true;
+      if (btnImport) disableForConfirm(btnImport);
+      releaseGuardIfSubmitCancelled(confirmForm, confirmForm, e);
     });
   }
 
