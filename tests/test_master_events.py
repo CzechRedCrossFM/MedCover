@@ -360,6 +360,29 @@ class TestTableManager:
         response = admin_client.get(f"/master-events/{me_id}/table")
         assert b"Akce TM" in response.data
 
+    def test_archived_event_is_not_shown(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        with app.app_context():
+            remaining = Event(
+                name="Zůstávající akce TM",
+                master_event_id=me_id,
+                start_datetime=datetime(2030, 7, 2, 8, 0, tzinfo=timezone.utc),
+                end_datetime=datetime(2030, 7, 2, 16, 0, tzinfo=timezone.utc),
+                status=EventStatus.ASSIGNMENTS_OPEN,
+            )
+            db.session.add(remaining)
+            db.session.flush()
+            db.session.add(EventSpot(event_id=remaining.id))
+            db.session.commit()
+
+        # Follow the redirect so the archive flash (which names the event) is consumed here.
+        assert admin_client.post(f"/events/{event_id}/archive", follow_redirects=True).status_code == 200
+
+        response = admin_client.get(f"/master-events/{me_id}/table")
+        assert response.status_code == 200
+        assert b"Akce TM" not in response.data
+        assert "Zůstávající akce TM".encode() in response.data
+
     def test_404_for_missing_me(self, admin_client):
         response = admin_client.get("/master-events/99999/table")
         assert response.status_code == 404
