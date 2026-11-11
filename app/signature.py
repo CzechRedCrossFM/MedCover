@@ -17,22 +17,11 @@ flexibility but currently always holds "image/png".
 import io
 import logging
 
-from PIL import Image, ImageOps, UnidentifiedImageError
-from pillow_heif import register_heif_opener
+from PIL import Image, ImageOps
+
+from app.image_upload import MAX_IMAGE_PIXELS, open_upload_image
 
 log = logging.getLogger(__name__)
-
-# Register HEIC/HEIF openers with Pillow so Image.open() handles iPhone photos.
-register_heif_opener()
-
-# Guardrails against decompression bombs. Comfortably fits any real phone
-# photo (12 MP is ~12 M pixels) but rejects pathological inputs. Pillow's own
-# Image.MAX_IMAGE_PIXELS only raises at 2× the limit (below that it just emits
-# a warning), so we enforce the exact cap ourselves from the lazy-loaded
-# header and keep Pillow's check as a second line of defence in case the
-# header lies about the real pixel count.
-MAX_IMAGE_PIXELS = 25_000_000
-Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 # Public constants; used by the route and template.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MiB — request-body cap before decode
@@ -42,9 +31,6 @@ TARGET_HEIGHT_PX = 200  # signature strip height in the final PNG
 # height-normalised width would blow up allocation during resize. A real
 # signature strip is at most ~6:1; 20:1 leaves headroom for odd scans.
 MAX_ASPECT_RATIO = 20
-# MPO is a multi-frame JPEG container iPhones produce in HDR mode; the primary
-# frame is a normal JPEG, which is what Pillow returns from Image.open().
-ACCEPTED_FORMATS = frozenset({"PNG", "JPEG", "MPO", "HEIF", "HEIC"})
 
 
 class SignatureError(ValueError):
@@ -66,48 +52,7 @@ def process_signature_upload(raw_bytes: bytes) -> bytes:
             disallowed format, or the processed output still exceeds
             `MAX_STORED_BYTES`.
     """
-    try:
-        source = Image.open(io.BytesIO(raw_bytes))
-        # Image.open is lazy and only reads the header, so .size is available
-        # without decoding pixels. Reject oversized images before load().
-        if source.width * source.height > MAX_IMAGE_PIXELS:
-            log.warning(
-                "Rejected oversized image (%dx%d, %d bytes)",
-                source.width,
-                source.height,
-                len(raw_bytes),
-            )
-            raise SignatureError("Obrázek je příliš velký (rozlišení).")
-        source.load()  # force decode so format errors surface here
-    except (UnidentifiedImageError, OSError) as exc:
-        raise SignatureError("Soubor není platný obrázek.") from exc
-    except Image.DecompressionBombError as exc:
-        # Failsafe: header under-reported the pixel count and Pillow tripped
-        # its own guard (fires at 2× MAX_IMAGE_PIXELS) during decode.
-        log.warning(
-            "Rejected oversized image (%d bytes) — possible decompression bomb",
-            len(raw_bytes),
-        )
-        raise SignatureError("Obrázek je příliš velký (rozlišení).") from exc
-
-    if source.format not in ACCEPTED_FORMATS:
-        raise SignatureError("Nepodporovaný formát obrázku. Použijte PNG, JPEG nebo HEIC.")
-
-    # EXIF auto-orient — must run before crop/resize.
-    img: Image.Image = ImageOps.exif_transpose(source) or source
-
-    # Flatten transparency onto white so alpha regions don't turn black
-    # after mode conversion, then normalise to RGB (keep colour). Palette
-    # images (mode "P") can carry transparency via img.info; promote them
-    # to RGBA first so the alpha channel exists to composite against.
-    if img.mode == "P" and "transparency" in img.info:
-        img = img.convert("RGBA")
-    if img.mode in ("RGBA", "LA", "PA"):
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        background.paste(img, mask=img.split()[-1])
-        img = background
-    else:
-        img = img.convert("RGB")
+    img = open_upload_image(raw_bytes, SignatureError, max_pixels=MAX_IMAGE_PIXELS)
 
     # Auto-crop white borders. Threshold at ~200 so photo backgrounds (which
     # are rarely pure white) still get trimmed. Safety valve: if the trim

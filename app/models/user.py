@@ -69,6 +69,12 @@ class UserAccount(UserMixin, db.Model):  # type: ignore[misc]
     # UserAccount selects; loaded only when explicitly accessed.
     signature_image = deferred(db.Column(db.LargeBinary, nullable=True))
     signature_mimetype = db.Column(db.String(50), nullable=True)
+    # Profile photo: 320x320 JPEG (<= 64 KiB), metadata stripped. The blob is deferred so it
+    # never rides along with UserAccount selects (event detail lists many users). The token is
+    # a short content hash: non-NULL iff a photo exists; it busts browser caches (?v=) and is
+    # the ETag. The three columns are NULL together or set together.
+    profile_photo = deferred(db.Column(db.LargeBinary, nullable=True))
+    profile_photo_token = db.Column(db.String(16), nullable=True)
     # Optimistic-lock counter enforced via SQLAlchemy version_id_col.
     # Callers must bump before commit; stale committed values raise StaleDataError.
     version = db.Column(db.Integer, default=1, nullable=False)
@@ -199,6 +205,10 @@ class UserAccount(UserMixin, db.Model):  # type: ignore[misc]
 
     def has_any_permission(self, *codes: str) -> bool:
         return any(self.has_permission(code) for code in codes)
+
+    @property
+    def has_profile_photo(self) -> bool:
+        return self.profile_photo_token is not None
 
     @property
     def is_external(self) -> bool:

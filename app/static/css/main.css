@@ -313,6 +313,12 @@
 /* Signature preview thumbnail (users/profile.html) */
 .signature-preview { max-height: 100px; max-width: 100%; }
 
+/* Profile photo avatars and phone links */
+.avatar { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 50%; object-fit: cover; vertical-align: middle; overflow: hidden; }
+.avatar-sm { width: 32px; height: 32px; font-size: .75rem; }
+.avatar-lg { width: 160px; height: 160px; font-size: 3rem; }
+.avatar-initials { background-color: var(--bs-secondary-bg); color: var(--bs-emphasis-color); font-weight: 600; line-height: 1; user-select: none; }
+
 /* Batch toolbar — flex layout when shown; d-none class overrides this */
 #batchToolbar { display: flex; }
 

@@ -27,7 +27,7 @@ from .models.assignment import Assignment
 from .models.event import Event
 from .models.settings import get_settings
 from .models.user import EventTimeFormat
-from .utils import CZECH_DAY_ABBR, cznum, format_event_time, get_app_tz, safe_next, to_local
+from .utils import CZECH_DAY_ABBR, cznum, format_event_time, get_app_tz, name_initials, safe_next, tel_href, to_local
 
 # Computed once at import/startup; used as a cache-busting version for static files.
 _STARTUP_TS: str = str(int(_time.time()))
@@ -213,6 +213,8 @@ def create_app(
         return CZECH_DAY_ABBR[to_local(dt).weekday()]
 
     app.add_template_filter(cznum, "cznum")
+    app.add_template_filter(name_initials, "initials")
+    app.add_template_filter(tel_href, "tel_href")
 
     @app.template_filter("event_time")
     def event_time_filter(event: Event) -> str:

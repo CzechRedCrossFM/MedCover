@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from 'macros/help.html' import help_icon %}
+{% from 'macros/people.html' import avatar with context %}
 {% from 'macros/badges.html' import badge_warning, badge_secondary %}
 {% block title %}{{ user.name }} — MedCover{% endblock %}
 
@@ -44,6 +45,35 @@
                 data-confirm="Obnovit účet {{ user.name }} z archivu?">Obnovit z archivu</button>
       </form>
       {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body d-flex gap-3 align-items-center flex-wrap">
+    {{ avatar(user, 'lg', 'Profilová fotka – ' ~ user.name) }}
+    <h2 class="h4 mb-0">{{ user.name }}</h2>
+    {% if current_user.has_permission('user.edit_any') %}
+    <div class="ms-md-auto d-flex gap-2 align-items-end flex-wrap">
+      <form method="POST" action="{{ url_for('users.photo_upload', user_id=user.id) }}" enctype="multipart/form-data" class="d-flex gap-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="version" value="{{ user.version }}">
+        <div>
+          <label for="photo" class="form-label mb-1">{{ 'Nahradit fotku' if user.has_profile_photo else 'Nahrát fotku' }}</label>
+          <input type="file" class="form-control form-control-sm" id="photo" name="photo"
+                 accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" required>
+        </div>
+        <button type="submit" class="btn btn-sm btn-primary">Nahrát</button>
+      </form>
+      {% if user.has_profile_photo %}
+      <form method="POST" action="{{ url_for('users.photo_remove', user_id=user.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="version" value="{{ user.version }}">
+        <button type="submit" class="btn btn-sm btn-outline-danger"
+                data-confirm="Opravdu smazat profilovou fotku uživatele {{ user.name }}?">Smazat fotku</button>
+      </form>
+      {% endif %}
+    </div>
     {% endif %}
   </div>
 </div>

@@ -1,0 +1,30 @@
+{#
+  macros/people.html — avatar and phone markup for people lists.
+  Import with context (current_user is needed by assignee).
+  Never use inline error handlers for the image fallback: the server-side
+  token check decides between <img> and initials.
+#}
+
+{% macro avatar(user, size='sm', alt='') %}
+{%- set px = 160 if size == 'lg' else 32 -%}
+{%- if user.has_profile_photo -%}
+<img src="{{ url_for('users.photo', user_id=user.id, v=user.profile_photo_token) }}" width="{{ px }}" height="{{ px }}" loading="lazy" alt="{{ alt }}" class="avatar avatar-{{ size }}">
+{%- else -%}
+<span class="avatar avatar-{{ size }} avatar-initials" aria-hidden="true">{{ user.name | initials }}</span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro phone_link(phone) %}
+{%- set href = phone | tel_href -%}
+{%- if href -%}
+<span class="text-nowrap">(<a href="tel:{{ href }}"><span aria-hidden="true">📞</span> {{ phone }}</a>)</span>
+{%- endif -%}
+{% endmacro %}
+
+{% macro assignee(user) %}
+<span class="d-inline-flex align-items-center gap-2 flex-wrap">
+  {{ avatar(user) }}
+  {% if current_user.has_permission('user.view') %}<a href="{{ url_for('users.detail', user_id=user.id) }}" class="text-decoration-none">{{ user.name }}</a>{% else %}<span>{{ user.name }}</span>{% endif %}
+  {{ phone_link(user.phone) }}
+</span>
+{% endmacro %}
