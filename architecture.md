@@ -709,6 +709,18 @@ When in doubt about the correct Czech UI label or English code name for a concep
         - Archived users are excluded from event/assignment notifications and admin digest.
     - **User lifecycle states:** `pending` (`is_active=False, is_archived=False`) → `active` (`is_active=True, is_archived=False`) → `archived` (`is_active=False, is_archived=True`).
 
+- AD22 Profile Photo Storage and Serving
+    - **Status:** Decided
+    - **Context:** Issue #637 — a member's photo and phone number should be visible in the user detail page and next to the name in the event-detail assignments, so that people can recognise and quickly call each other.
+    - **Decision:**
+        - Users upload their own photo on `/profile`; holders of `user.edit_any` can set or remove any user's photo on the user detail page (separate POST routes, outside `save_user`).
+        - The photo is stored in the database as a deferred `LargeBinary` on `UserAccount`, like the signature. It is re-encoded by Pillow (PNG, JPEG, HEIC accepted) into one 320×320 JPEG of at most 64 KiB with all metadata dropped. A single stored size is scaled down in CSS for thumbnails; there is no second thumbnail column.
+        - `profile_photo_token` (first 16 hex characters of the SHA-256 of the stored bytes) is non-NULL iff a photo exists. It serves as the presence flag, the `?v=` cache-buster and the ETag, so event detail can decide between `<img>` and initials without loading the blob, and the query count does not grow with the number of assignees.
+        - `GET /users/<id>/photo` requires login and, for photos of other users, `event.view` or `user.view`. It answers with `Cache-Control: private, max-age=86400` and an ETag.
+        - Users without a photo get an initials fallback. The assignee's phone is rendered as a `tel:` link containing only digits and `+`.
+    - **Privacy note:** Photos and phone numbers of all assignees are visible to everyone who can view the event detail, including External users. This was a deliberate product decision.
+    - **Alternatives rejected:** inline `data:` URIs (no caching, bloats HTML); a separate photo table (overkill for 1:1 optional data); reusing `version` as the cache token (every profile edit would invalidate cached photos).
+
 MedCover is a standard three-tier web application:
 
 - **Frontend** — a browser-based web client accessed over the public Internet. Optimised for both desktop and mobile screens.
@@ -917,7 +929,7 @@ erDiagram
 
 | Entity | Key attributes | Notes |
 |---|---|---|
-| **UserAccount** | email, password hash, name, phone, active flag, preferred_calendar_view | Email = login identifier; accounts inactive until admin-activated |
+| **UserAccount** | email, password hash, name, phone, active flag, preferred_calendar_view, optional profile photo | Email = login identifier; accounts inactive until admin-activated |
 | **Role** | name, description | Pre-defined: Admin, Coordinator, Member, Viewer |
 | **Permission** | code (e.g. `event.create`) | Object-level permissions assigned to roles |
 | **Qualification** | name, description, parent qualifications | Unified model for medical qualifications and training certifications |

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros/people.html' import assignee with context %}
 {% from 'macros/badges.html' import badge_status, badge_info, badge_secondary, obsazeni_badges %}
 {% block title %}{{ event.name }} — MedCover{% endblock %}
 
@@ -348,7 +349,7 @@
         </td>
         <td>
           {% if spot.assignment %}
-            {% if current_user.has_permission('user.view') %}<a href="{{ url_for('users.detail', user_id=spot.assignment.user_id) }}" class="text-decoration-none">{{ spot.assignment.user.name }}</a>{% else %}{{ spot.assignment.user.name }}{% endif %}
+            {{ assignee(spot.assignment.user) }}
           {% else %}
             Volné
           {% endif %}

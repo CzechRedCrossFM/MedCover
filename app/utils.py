@@ -1,5 +1,6 @@
 """Shared utility helpers for the MedCover application."""
 
+import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, TypeVar
@@ -403,3 +404,29 @@ def quick_date_ranges() -> list[tuple[str, str, str]]:
         ("Od začátku roku", ty_from.isoformat(), today.isoformat()),
         ("Celý rok", ty_from.isoformat(), ty_to.isoformat()),
     ]
+
+
+def name_initials(name: str | None) -> str:
+    """Initials of the first and last word of a name; "?" when nothing usable."""
+    words = (name or "").split()
+    picked = words[:1] + words[-1:] if len(words) > 1 else words
+    initials = ""
+    for word in picked:
+        first = next((ch for ch in word if ch.isalnum()), "")
+        initials += first.upper()
+    return initials or "?"
+
+
+def ascii_digits(text: str) -> str:
+    """Replace every Unicode decimal digit (e.g. full-width "９") with its ASCII digit; other characters stay."""
+    return "".join(str(unicodedata.decimal(ch)) if ch.isdecimal() else ch for ch in text)
+
+
+def tel_href(phone: str | None) -> str:
+    """Dialable form of a phone number (digits and at most one leading "+"); "" when it has no digit.
+
+    Any Unicode decimal digit becomes its ASCII digit, so no digit is dropped.
+    """
+    digits = "".join(ch for ch in ascii_digits(phone or "") if ch in "0123456789")
+    dialable = f"+{digits}" if (phone or "").lstrip().startswith("+") else digits
+    return dialable if any(ch.isdigit() for ch in dialable) else ""

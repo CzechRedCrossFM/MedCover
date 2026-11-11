@@ -25,6 +25,13 @@ from app.models.qualification import Qualification
 from app.models.role import Role, validate_role_combination
 from app.models.user import CalendarView, EventTimeFormat, UserAccount
 from app.models.user import user_roles as user_roles_table
+from app.profile_photo import MAX_UPLOAD_BYTES as PHOTO_MAX_UPLOAD_BYTES
+from app.profile_photo import (
+    STORED_MIMETYPE,
+    ProfilePhotoError,
+    photo_token,
+    process_profile_photo_upload,
+)
 from app.routes.assignments import lock_condition_event, refresh_responsible_person
 from app.signature import (
     MAX_UPLOAD_BYTES,
@@ -33,6 +40,7 @@ from app.signature import (
 )
 from app.utils import (
     CS_COLLATION,
+    ascii_digits,
     audit,
     bind_form_version,
     check_version_conflict,
@@ -50,11 +58,22 @@ from app.utils import (
 users_bp = Blueprint("users", __name__, url_prefix="/users")
 
 _PAGE_SIZE = 30
+PHOTO_CACHE_SECONDS = 86400
 
-# Phone: 9 bare digits, OR +/00 followed by 10-15 digits (spaces stripped before check)
-_PHONE_RE = re.compile(r"^\d{9}$|^(\+|00)\d{10,15}$")
+# Phone: 9 bare digits, OR +/00 followed by 10-15 digits (spaces stripped before check).
+# ASCII digits only: \d would also accept e.g. full-width or Arabic-Indic digits.
+_PHONE_RE = re.compile(r"^[0-9]{9}$|^(\+|00)[0-9]{10,15}$")
 # Email: basic structural check — local@domain.tld
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalize_phone(raw: str) -> str:
+    """Submitted phone with surrounding whitespace removed and Unicode digits as ASCII.
+
+    Numbers saved before validation became ASCII-only may hold e.g. full-width digits;
+    converting them here lets such a profile be saved again unchanged.
+    """
+    return ascii_digits(raw.strip())
 
 
 def _validate_phone(raw: str) -> bool:
@@ -85,6 +104,10 @@ def profile() -> str | Response:
         if action == "signature_remove":
             require_permission("work_report.generate")
             return _remove_signature(user)
+        if action == "photo_upload":
+            return _store_profile_photo(user, url_for("users.profile"))
+        if action == "photo_remove":
+            return _clear_profile_photo(user, url_for("users.profile"))
     issued_items = db.session.scalars(db.select(EquipmentItem).where(EquipmentItem.issued_to_id == user.id)).all()
     now = datetime.now(timezone.utc)
     upcoming = db.session.scalars(
@@ -144,11 +167,11 @@ def _update_profile(user: UserAccount) -> Response:
             flash("Jméno nesmí být prázdné.", "danger")
             return redirect(url_for("users.profile"))
         user.name = name
-    phone_raw = request.form.get("phone", "").strip()
-    if not _validate_phone(phone_raw):
+    phone_normalized = _normalize_phone(request.form.get("phone", ""))
+    if not _validate_phone(phone_normalized):
         flash("Neplatný formát telefonního čísla.", "danger")
         return redirect(url_for("users.profile"))
-    user.phone = phone_raw or None
+    user.phone = phone_normalized or None
     return _commit_profile_change(user, before, {"name": user.name, "phone": user.phone}, "Profil byl uložen.")
 
 
@@ -197,27 +220,30 @@ def _commit_profile_change(
     return redirect(url_for("users.profile"))
 
 
+def _read_upload(field: str, max_bytes: int) -> bytes | None:
+    """Read the uploaded file bounded by max_bytes; flash and return None when unusable."""
+    too_large_msg = f"Soubor je příliš velký (max {max_bytes // (1024 * 1024)} MB)."
+    if request.content_length is not None and request.content_length > max_bytes:
+        flash(too_large_msg, "danger")
+        return None
+    file = request.files.get(field)
+    if not file or not file.filename:
+        flash("Nebyl vybrán žádný soubor.", "danger")
+        return None
+    raw = file.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        flash(too_large_msg, "danger")
+        return None
+    return raw
+
+
 def _upload_signature(user: UserAccount) -> Response:
     if check_version_conflict(user, request.form.get("version")):
         flash(RECORD_MODIFIED_MSG, "danger")
         return redirect(url_for("users.profile"))
     bind_form_version(user, request.form.get("version"))
-    if request.content_length is not None and request.content_length > MAX_UPLOAD_BYTES:
-        flash(
-            f"Soubor je příliš velký (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
-            "danger",
-        )
-        return redirect(url_for("users.profile"))
-    file = request.files.get("signature")
-    if not file or not file.filename:
-        flash("Nebyl vybrán žádný soubor.", "danger")
-        return redirect(url_for("users.profile"))
-    raw = file.read(MAX_UPLOAD_BYTES + 1)
-    if len(raw) > MAX_UPLOAD_BYTES:
-        flash(
-            f"Soubor je příliš velký (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
-            "danger",
-        )
+    raw = _read_upload("signature", MAX_UPLOAD_BYTES)
+    if raw is None:
         return redirect(url_for("users.profile"))
     try:
         processed = process_signature_upload(raw)
@@ -276,6 +302,101 @@ def signature_preview() -> Response:
     )
     resp.headers["Cache-Control"] = "private"
     return resp
+
+
+def _store_profile_photo(user: UserAccount, back_url: str) -> Response:
+    if check_version_conflict(user, request.form.get("version")):
+        flash(RECORD_MODIFIED_MSG, "danger")
+        return redirect(back_url)
+    bind_form_version(user, request.form.get("version"))
+    raw = _read_upload("photo", PHOTO_MAX_UPLOAD_BYTES)
+    if raw is None:
+        return redirect(back_url)
+    try:
+        processed = process_profile_photo_upload(raw)
+    except ProfilePhotoError as exc:
+        flash(str(exc), "danger")
+        return redirect(back_url)
+    had_photo_before = user.profile_photo_token is not None
+    user.profile_photo = processed
+    user.profile_photo_token = photo_token(processed)
+    user.version += 1
+    if user.id == current_user.id:
+        summary = f"Uživatel {user.name} nahrál profilovou fotku"
+    else:
+        summary = f"Uživatel {current_user.name} nahrál profilovou fotku uživateli {user.name}"
+    audit(
+        "edit",
+        "UserAccount",
+        user.id,
+        summary,
+        {"profile_photo": ["set" if had_photo_before else None, "set"]},
+    )
+    if (resp := commit_or_stale(back_url)) is not None:
+        return resp
+    flash("Profilová fotka byla uložena.", "success")
+    return redirect(back_url)
+
+
+def _clear_profile_photo(user: UserAccount, back_url: str) -> Response:
+    if check_version_conflict(user, request.form.get("version")):
+        flash(RECORD_MODIFIED_MSG, "danger")
+        return redirect(back_url)
+    bind_form_version(user, request.form.get("version"))
+    if user.profile_photo_token is None:
+        return redirect(back_url)
+    user.profile_photo = None
+    user.profile_photo_token = None
+    user.version += 1
+    if user.id == current_user.id:
+        summary = f"Uživatel {user.name} smazal profilovou fotku"
+    else:
+        summary = f"Uživatel {current_user.name} smazal profilovou fotku uživatele {user.name}"
+    audit("edit", "UserAccount", user.id, summary, {"profile_photo": ["set", None]})
+    if (resp := commit_or_stale(back_url)) is not None:
+        return resp
+    flash("Profilová fotka byla smazána.", "success")
+    return redirect(back_url)
+
+
+@users_bp.route("/<uuid:user_id>/photo")
+@login_required
+def photo(user_id: uuid.UUID) -> Response:
+    if user_id != current_user.id:
+        require_permission("event.view", "user.view")
+    token = db.session.scalar(db.select(UserAccount.profile_photo_token).where(UserAccount.id == user_id))
+    if token is None:
+        abort(404)
+    if request.if_none_match.contains_weak(token):
+        resp = Response(status=304)
+    else:
+        # Re-read token with the blob so the ETag always matches the served bytes.
+        row = db.session.execute(
+            db.select(UserAccount.profile_photo_token, UserAccount.profile_photo).where(UserAccount.id == user_id)
+        ).one()
+        token, data = row.profile_photo_token, row.profile_photo
+        if token is None or data is None:
+            abort(404)
+        resp = Response(data, mimetype=STORED_MIMETYPE)
+    resp.set_etag(token)
+    resp.headers["Cache-Control"] = f"private, max-age={PHOTO_CACHE_SECONDS}"
+    return resp
+
+
+@users_bp.route("/<uuid:user_id>/photo/upload", methods=["POST"])
+@login_required
+def photo_upload(user_id: uuid.UUID) -> Response:
+    require_permission("user.edit_any")
+    user = get_or_404(UserAccount, user_id)
+    return _store_profile_photo(user, url_for("users.detail", user_id=user_id))
+
+
+@users_bp.route("/<uuid:user_id>/photo/remove", methods=["POST"])
+@login_required
+def photo_remove(user_id: uuid.UUID) -> Response:
+    require_permission("user.edit_any")
+    user = get_or_404(UserAccount, user_id)
+    return _clear_profile_photo(user, url_for("users.detail", user_id=user_id))
 
 
 def _change_password(user: UserAccount) -> Response:
@@ -422,7 +543,7 @@ def create_user() -> str | Response:
 
     name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
-    phone_raw = request.form.get("phone", "").strip()
+    phone_normalized = _normalize_phone(request.form.get("phone", ""))
 
     if not name:
         flash("Jméno nesmí být prázdné.", "danger")
@@ -430,7 +551,7 @@ def create_user() -> str | Response:
     if not email or not _EMAIL_RE.match(email):
         flash("Zadejte platný e-mail.", "danger")
         return render_template("users/create.html", all_roles=all_roles, all_qualifications=all_qualifications)
-    if not _validate_phone(phone_raw):
+    if not _validate_phone(phone_normalized):
         flash("Neplatný formát telefonního čísla.", "danger")
         return render_template("users/create.html", all_roles=all_roles, all_qualifications=all_qualifications)
 
@@ -443,7 +564,7 @@ def create_user() -> str | Response:
     user = UserAccount(
         name=name,
         email=email,
-        phone=phone_raw or None,
+        phone=phone_normalized or None,
         is_active=True,
     )
     user.set_password(secrets.token_hex(32))
@@ -569,7 +690,7 @@ def save_user(user_id: uuid.UUID) -> Response:
     # ── Basic info ──────────────────────────────────────────────────────────
     name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
-    phone_raw = request.form.get("phone", "").strip()
+    phone_normalized = _normalize_phone(request.form.get("phone", ""))
 
     if not name:
         flash("Jméno nesmí být prázdné.", "danger")
@@ -577,7 +698,7 @@ def save_user(user_id: uuid.UUID) -> Response:
     if not email:
         flash("E-mail nesmí být prázdný.", "danger")
         return redirect(url_for("users.detail", user_id=user_id))
-    if not _validate_phone(phone_raw):
+    if not _validate_phone(phone_normalized):
         flash("Neplatný formát telefonního čísla.", "danger")
         return redirect(url_for("users.detail", user_id=user_id))
     if email != user.email:
@@ -591,7 +712,7 @@ def save_user(user_id: uuid.UUID) -> Response:
     info_before: dict[str, Any] = {"name": user.name, "email": user.email, "phone": user.phone}
     user.name = name
     user.email = email
-    user.phone = phone_raw or None
+    user.phone = phone_normalized or None
     info_after: dict[str, Any] = {"name": user.name, "email": user.email, "phone": user.phone}
     info_changed = info_before != info_after
     if info_changed:

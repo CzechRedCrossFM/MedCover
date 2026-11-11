@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from 'macros/help.html' import help_icon %}
 {% from 'macros/badges.html' import badge_secondary %}
+{% from 'macros/people.html' import avatar with context %}
 {% block title %}Můj profil — MedCover{% endblock %}
 
 {% block content %}
@@ -104,6 +105,44 @@
       </div>
     </div>
 
+    <!-- ── Profile photo ── -->
+    <div class="card mb-4">
+      <div class="card-header fw-semibold">
+        Profilová fotka
+        {{ help_icon("Fotka se zobrazuje na vašem profilu a u vašeho jména v přehledu přihlášených na akci.") }}
+      </div>
+      <div class="card-body">
+        <div class="d-flex align-items-center gap-3 mb-3">
+          {{ avatar(user, 'lg', 'Profilová fotka – ' ~ user.name) }}
+          {% if user.has_profile_photo %}
+          <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="photo_remove">
+            <input type="hidden" name="version" value="{{ user.version }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger"
+                    data-confirm="Opravdu smazat profilovou fotku?">Smazat fotku</button>
+          </form>
+          {% else %}
+          <span class="text-muted">Zatím není nahraná žádná fotka.</span>
+          {% endif %}
+        </div>
+        <form method="POST" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="photo_upload">
+          <input type="hidden" name="version" value="{{ user.version }}">
+          <label for="photo" class="form-label">
+            {{ 'Nahradit fotku' if user.has_profile_photo else 'Nahrát fotku' }}
+          </label>
+          <div class="input-group">
+            <input type="file" class="form-control" id="photo" name="photo"
+                   accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" required>
+            <button type="submit" class="btn btn-primary">Nahrát</button>
+          </div>
+          <div class="form-text">Podporované formáty: PNG, JPEG, HEIC. Fotka se ořízne na čtverec a zmenší.</div>
+        </form>
+      </div>
+    </div>
+
     <!-- ── Signature ── -->
     {% if current_user.has_permission('work_report.generate') %}
     <div class="card mb-4">
@@ -132,20 +171,16 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="signature_upload">
           <input type="hidden" name="version" value="{{ user.version }}">
-          <div class="row g-3 align-items-end">
-            <div class="col-12 col-md-8">
-              <label for="signature" class="form-label">
-                {{ 'Nahradit podpis novým obrázkem' if has_signature else 'Nahrát podpis' }}
-              </label>
-              <input type="file" class="form-control" id="signature" name="signature"
-                     accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" required>
-              <div class="form-text">
-                Vyfoťte svůj podpis na čisté bílé stránce, nebo použijte sken. Před nahráním fotku ořízněte tak, aby byl vidět jen podpis na bílém pozadí.
-              </div>
-            </div>
-            <div class="col-12 col-md-4">
-              <button type="submit" class="btn btn-primary">Nahrát</button>
-            </div>
+          <label for="signature" class="form-label">
+            {{ 'Nahradit podpis novým obrázkem' if has_signature else 'Nahrát podpis' }}
+          </label>
+          <div class="input-group">
+            <input type="file" class="form-control" id="signature" name="signature"
+                   accept="image/png,image/jpeg,image/heic,image/heif,.heic,.heif" required>
+            <button type="submit" class="btn btn-primary">Nahrát</button>
+          </div>
+          <div class="form-text">
+            Vyfoťte svůj podpis na čisté bílé stránce, nebo použijte sken. Před nahráním fotku ořízněte tak, aby byl vidět jen podpis na bílém pozadí.
           </div>
         </form>
       </div>

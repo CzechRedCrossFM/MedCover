@@ -979,6 +979,7 @@ VALID_PHONES = [
     "123 456 789",
     "+420123456789",
     "+420 123 456 789",
+    "+420 123456789",
     "00420123456789",
     "00420 123 456 789",
     "+1 555 123 456",  # international with short local
@@ -992,6 +993,13 @@ INVALID_PHONES = [
     "123-456-789",  # hyphens not allowed
     "phone: 123",
     "123 456 789 0",  # extra digit
+]
+
+# Unicode digits (escaped because they look like ASCII ones) are saved as ASCII digits,
+# so a number stored before validation became ASCII-only can be submitted unchanged.
+UNICODE_DIGIT_PHONES = [
+    ("12345678\uff19", "123456789"),  # full-width 9
+    ("+420 \u0661\u0662\u0663 456 789", "+420 123 456 789"),  # Arabic-Indic digits
 ]
 
 
@@ -1025,6 +1033,20 @@ class TestPhoneValidationProfile:
         )
         assert "Neplatný formát telefonního čísla".encode() in resp.data
 
+    @pytest.mark.parametrize(("phone", "saved"), UNICODE_DIGIT_PHONES)
+    def test_unicode_digits_saved_as_ascii_on_profile(
+        self, app: object, member_client: object, phone: str, saved: str
+    ) -> None:
+        resp = member_client.post(
+            "/users/profile",
+            data={"action": "profile", "name": "Test Member", "phone": phone, "version": "1"},
+            follow_redirects=True,
+        )
+        assert "Profil byl uložen".encode() in resp.data
+        with app.app_context():
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "member@test.com"))
+            assert user is not None and user.phone == saved
+
 
 class TestPhoneValidationAdminEdit:
     def _create_user(self, app: object) -> str:
@@ -1057,6 +1079,21 @@ class TestPhoneValidationAdminEdit:
             follow_redirects=True,
         )
         assert "Neplatný formát telefonního čísla".encode() in resp.data
+
+    @pytest.mark.parametrize(("phone", "saved"), UNICODE_DIGIT_PHONES)
+    def test_unicode_digits_saved_as_ascii_on_admin_edit(
+        self, app: object, admin_client: object, phone: str, saved: str
+    ) -> None:
+        uid = self._create_user(app)
+        resp = admin_client.post(
+            f"/users/{uid}/save",
+            data={"name": "Phone Target", "email": "phonetarget@test.com", "phone": phone, "version": "1"},
+            follow_redirects=True,
+        )
+        assert "Neplatný formát telefonního čísla".encode() not in resp.data
+        with app.app_context():
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "phonetarget@test.com"))
+            assert user is not None and user.phone == saved
 
 
 # ── Batch action tests ────────────────────────────────────────────────────────

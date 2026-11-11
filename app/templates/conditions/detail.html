@@ -1,3 +1,4 @@
+{% from 'macros/people.html' import assignee with context %}
 <h5>Podmínky obsazení</h5>
 {% include 'conditions/summary.html' %}
 {% if condition_can_join %}
@@ -22,7 +23,7 @@
 <ul class="list-group mb-4">
 {% for assignment in event.assignments %}
 <li class="list-group-item d-flex justify-content-between align-items-center">
-  <span>{{ assignment.user.name }}</span>
+  {{ assignee(assignment.user) }}
   {% if not event.archived and event.status not in [EventStatus.COMPLETED, EventStatus.CANCELLED] and (can_assign or (assignment.user_id == current_user.id and not me_coordinated)) %}
   <form method="POST" action="{{ url_for('assignments.release', assignment_id=assignment.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
