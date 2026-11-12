@@ -27,6 +27,7 @@ INSERT only the columns that exist in the *current* schema, ignoring any
 extra columns from an older or newer backup.  This means:
 - New nullable columns added by later migrations receive NULL (acceptable).
 - Removed columns in the backup are silently skipped.
+- NULL iCal tokens in older backups are regenerated on restore.
 - Restoring to a schema that added NOT NULL columns without defaults will
   fail at the DB level — the restore routine surfaces this as an error.
 """
@@ -36,6 +37,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import tempfile
 import uuid
 import zipfile
@@ -59,6 +61,10 @@ log = logging.getLogger(__name__)
 # (SMTP creds, base URL, etc.) that must be set up fresh on every instance.
 # alembic_version is managed by Flask-Migrate, not by the app.
 _EXCLUDED_TABLES: frozenset[str] = frozenset({"app_settings", "alembic_version"})
+
+# Columns that are NOT NULL but may be NULL in backups taken before they were
+# required; restore generates a fresh value for them.
+_GENERATED_TOKEN_COLUMNS: dict[str, tuple[str, ...]] = {"user_account": ("ical_token", "ical_all_token")}
 
 # Tables that must be restored in a specific order to satisfy FK constraints.
 # Tables not listed here are restored after these, in arbitrary order.
@@ -436,6 +442,9 @@ def restore_from_zip(zip_path: str | Path) -> None:
                                 f"Malformed binary data for {table_name}.{col_name} in backup "
                                 f"{zip_path.name!r}: not a valid hex string"
                             ) from exc
+                for col_name in _GENERATED_TOKEN_COLUMNS.get(table_name, ()):
+                    if col_name in current_columns and filtered.get(col_name) is None:
+                        filtered[col_name] = secrets.token_hex(32)
                 if filtered:
                     conn.execute(sa_table.insert().values(filtered))
             if has_identity:
