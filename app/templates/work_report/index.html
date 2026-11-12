@@ -48,7 +48,7 @@
 
         <div class="col-auto">
           <button type="submit" class="btn btn-primary btn-sm">
-            <i class="bi bi-arrow-repeat me-1"></i>Vygenerovat
+            <span class="me-1" aria-hidden="true">🔄</span>Vygenerovat
           </button>
         </div>
       </form>
@@ -72,7 +72,7 @@
         </div>
         <a href="{{ url_for('work_report.download', year=r.year, month=r.month, user_id=other_user_id) }}"
            class="btn btn-outline-success btn-sm">
-          <i class="bi bi-file-earmark-excel me-1"></i>Stáhnout
+          <span class="me-1" aria-hidden="true">📊</span>Stáhnout
         </a>
       </li>
       {% endfor %}
