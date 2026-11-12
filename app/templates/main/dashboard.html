@@ -21,11 +21,11 @@
 {# ── Quick actions ────────────────────────────────────────────────────────── #}
 <div class="d-flex gap-2 flex-wrap mb-3">
   <a href="{{ url_for('reports.own_report') }}" class="btn btn-outline-primary btn-sm">
-    <i class="bi bi-bar-chart-line me-1"></i>Moje statistiky
+    <span class="me-1" aria-hidden="true">📈</span>Moje statistiky
   </a>
   {% if current_user.has_permission("work_report.generate") %}
   <a href="{{ url_for('work_report.index') }}" class="btn btn-outline-success btn-sm">
-    <i class="bi bi-file-earmark-excel me-1"></i>Výkaz práce
+    <span class="me-1" aria-hidden="true">📊</span>Výkaz práce
   </a>
   {% endif %}
 </div>
@@ -55,7 +55,7 @@
 <div class="card border-danger mb-3">
   <div class="card-header bg-danger bg-opacity-10 d-flex justify-content-between align-items-center py-2">
     <span class="fw-semibold text-danger">
-      <i class="bi bi-clipboard2-pulse-fill me-1"></i>
+      <span class="me-1" aria-hidden="true">🩺</span>
       Nevyplněný debriefing ({{ pending_debriefings|length }})
     </span>
   </div>
@@ -81,7 +81,7 @@
 <div class="card border-danger mb-3">
   <div class="card-header bg-danger bg-opacity-10 d-flex justify-content-between align-items-center py-2">
     <span class="fw-semibold text-danger">
-      <i class="bi bi-exclamation-triangle-fill me-1"></i>
+      <span class="me-1" aria-hidden="true">⚠️</span>
       Akce bez zodpovědné osoby v příštích 7 dnech ({{ missing_rp_events|length }})
     </span>
     <a href="{{ url_for('events.index') }}" class="text-decoration-none small">Všechny akce →</a>

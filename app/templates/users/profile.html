@@ -291,7 +291,7 @@
           <strong>Jak rychle se aktualizuje:</strong> kalendářové aplikace stahují změny přibližně každé 4 hodiny — nová přihláška nebo změna času se neprojeví okamžitě.
         </p>
         <p class="mb-3 small">
-          <i class="bi bi-question-circle me-1 text-primary"></i>
+          <span class="me-1 text-primary" aria-hidden="true">❓</span>
           Návod na přidání:
           <a href="{{ url_for('users.ical_guide_google') }}">Google Kalendář</a>
         </p>
@@ -301,7 +301,7 @@
                  value="{{ ical_url }}" readonly>
           <button class="btn btn-outline-secondary" type="button" id="ical-copy-btn"
                   title="Kopírovat odkaz">
-            <i class="bi bi-clipboard"></i> Kopírovat
+            <span aria-hidden="true">📋</span> Kopírovat
           </button>
         </div>
 
@@ -309,7 +309,7 @@
               data-confirm="Opravdu chcete vygenerovat nový odkaz? Starý odkaz přestane okamžitě fungovat a budete se muset znovu přihlásit k odběru ve všech svých kalendářích.">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-warning">
-            <i class="bi bi-arrow-clockwise"></i> Vygenerovat nový odkaz
+            <span aria-hidden="true">🔄</span> Vygenerovat nový odkaz
           </button>
           <span class="ms-2 small text-muted">
             {{ help_icon("Pokud se obáváte, že váš odkaz někdo zná, vygenerujte nový. Starý odkaz okamžitě přestane fungovat — ve všech svých kalendářích se budete muset odběru znovu přihlásit pomocí nového odkazu.") }}
@@ -338,7 +338,7 @@
                  value="{{ ical_all_url }}" readonly>
           <button class="btn btn-outline-secondary" type="button" id="ical-all-copy-btn"
                   title="Kopírovat odkaz">
-            <i class="bi bi-clipboard"></i> Kopírovat
+            <span aria-hidden="true">📋</span> Kopírovat
           </button>
         </div>
 
@@ -346,7 +346,7 @@
               data-confirm="Opravdu chcete vygenerovat nový odkaz? Starý odkaz přestane okamžitě fungovat.">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-warning">
-            <i class="bi bi-arrow-clockwise"></i> Vygenerovat nový odkaz
+            <span aria-hidden="true">🔄</span> Vygenerovat nový odkaz
           </button>
           <span class="ms-2 small text-muted">
             {{ help_icon("Pokud se obáváte, že váš odkaz někdo zná, vygenerujte nový. Starý odkaz okamžitě přestane fungovat.") }}
@@ -373,7 +373,7 @@
           btn.textContent = '✓ Zkopírováno';
           btn.classList.replace('btn-outline-secondary', 'btn-success');
           setTimeout(function () {
-            btn.innerHTML = '<i class="bi bi-clipboard"></i> Kopírovat';
+            btn.innerHTML = '<span aria-hidden="true">📋</span> Kopírovat';
             btn.classList.replace('btn-success', 'btn-outline-secondary');
           }, 2000);
         });

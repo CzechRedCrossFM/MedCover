@@ -13,12 +13,12 @@
     </nav>
 
     <h2 class="mb-1">
-      <i class="bi bi-calendar3 me-2 text-primary"></i>Přidání do Google Kalendáře
+      <span class="me-2 text-primary" aria-hidden="true">📅</span>Přidání do Google Kalendáře
     </h2>
     <p class="text-muted mb-4">Jak přidat svůj MedCover kalendář jako odběr do Google Kalendáře.</p>
 
     <div class="alert alert-info d-flex gap-2 align-items-start mb-4" role="alert">
-      <i class="bi bi-monitor flex-shrink-0 mt-1"></i>
+      <span class="flex-shrink-0 mt-1" aria-hidden="true">🖥️</span>
       <span>
         Následující kroky je třeba provést ve <strong>webovém prohlížeči na počítači</strong>.
         Mobilní aplikace Google Kalendář přidání externího kalendáře neumožňuje.
@@ -27,21 +27,21 @@
 
     <ol class="mb-4 lh-2">
       <li>Ze svého profilu v MedCover zkopírujte kalendářový odkaz kliknutím na tlačítko
-          <strong><i class="bi bi-clipboard me-1"></i>Kopírovat</strong>.
+          <strong><span class="me-1" aria-hidden="true">📋</span>Kopírovat</strong>.
           <div class="mt-1 mb-2">
             <a href="{{ url_for('users.profile') }}#ical" class="btn btn-sm btn-outline-primary">
-              <i class="bi bi-person-circle me-1"></i>Přejít na profil
+              <span class="me-1" aria-hidden="true">👤</span>Přejít na profil
             </a>
           </div>
       </li>
       <li>Otevřete <a href="https://calendar.google.com/" target="_blank" rel="noopener noreferrer">
-            calendar.google.com <i class="bi bi-box-arrow-up-right small"></i></a>
+            calendar.google.com <span class="small" aria-hidden="true">↗</span></a>
           a přihlaste se ke svému Google účtu.</li>
       <li>V levém panelu klikněte na <strong>+</strong> vedle nápisu
           <strong>Jiné kalendáře</strong> a pak na <strong>Pomocí adresy URL</strong>.
           <div class="small text-muted mt-1 mb-2">
-            <i class="bi bi-info-circle me-1"></i>
-            Alternativně: ozubené kolo <i class="bi bi-gear"></i> vpravo nahoře →
+            <span class="me-1" aria-hidden="true">ℹ️</span>
+            Alternativně: ozubené kolo ⚙️ vpravo nahoře →
             <strong>Nastavení</strong> → <strong>Přidat kalendář</strong> → <strong>Pomocí adresy URL</strong>.
           </div>
       </li>
@@ -49,13 +49,13 @@
           (<kbd>Ctrl</kbd>+<kbd>V</kbd>) a klikněte na <strong>Přidat kalendář</strong>.</li>
       <li>Nově přidaný kalendář najdete v levém panelu v sekci
           <strong>Nastavení jiných kalendářů</strong> — tam ho můžete přejmenovat, nastavit oznámení atd.</li>
-      <li>Pro návrat do kalendáře klikněte na šipku <i class="bi bi-arrow-left"></i> v levém horním rohu.</li>
+      <li>Pro návrat do kalendáře klikněte na šipku ← v levém horním rohu.</li>
       <li>Váš MedCover kalendář uvidíte v sekci <strong>Jiné kalendáře</strong>.
           Kliknutím na barevný čtvereček si můžete zvolit barvu zobrazení událostí.</li>
     </ol>
 
     <div class="alert alert-warning d-flex gap-2 align-items-start" role="alert">
-      <i class="bi bi-clock-history flex-shrink-0 mt-1"></i>
+      <span class="flex-shrink-0 mt-1" aria-hidden="true">🕒</span>
       <div>
         <strong>Důležité upozornění:</strong>
         Události v kalendáři nereagují na změny v MedCover okamžitě.
@@ -65,7 +65,7 @@
 
     <div class="mt-4">
       <a href="{{ url_for('users.profile') }}#ical" class="btn btn-secondary">
-        <i class="bi bi-arrow-left me-1"></i>Zpět na profil
+        <span class="me-1" aria-hidden="true">←</span>Zpět na profil
       </a>
     </div>
 

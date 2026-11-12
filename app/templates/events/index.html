@@ -258,7 +258,7 @@
               {{ event.responsible_person.name }}
             {% elif event.status.name not in ('DRAFT', 'CANCELLED') %}
               <span class="badge bg-danger" title="Akce nemá přiřazenou zodpovědnou osobu">
-                <i class="bi bi-exclamation-triangle-fill"></i> Chybí
+                <span aria-hidden="true">⚠️</span> Chybí
               </span>
             {% else %}
               —

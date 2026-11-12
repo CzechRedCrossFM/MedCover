@@ -19,7 +19,7 @@
       {# ── Part 1: Confidential feedback ─────────────────────────────────── #}
       <div class="card mb-4">
         <div class="card-header d-flex align-items-center gap-2">
-          <i class="bi bi-lock-fill text-danger"></i>
+          <span class="text-danger" aria-hidden="true">🔒</span>
           <strong>Důvěrná část</strong>
           {{ help_icon("Tato část je přísně důvěrná. Uvidí ji pouze vedení organizace (Debriefing Manager). Hodnoťte upřímně — váš záznam není přístupný koordinátorům ani ostatním účastníkům.") }}
         </div>
@@ -78,7 +78,7 @@
       {% if has_rp_section %}
       <div class="card mb-4 border-primary">
         <div class="card-header bg-primary bg-opacity-10 d-flex align-items-center gap-2">
-          <i class="bi bi-clipboard2-pulse-fill text-primary"></i>
+          <span class="text-primary" aria-hidden="true">🩺</span>
           {% if event.event_type == EventType.TRAINING %}
             <strong>Část zodpovědné osoby (lektor)</strong>
             {{ help_icon("Tuto část vyplňuje zodpovědná osoba (lektor školení). Skutečné časy a počet účastníků jsou viditelné pro koordinátory a slouží pro výkazy. Všechna pole jsou nepovinná.") }}
@@ -144,7 +144,7 @@
       {% endif %}
 
       <div class="alert alert-warning py-2 small">
-        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <span class="me-1" aria-hidden="true">⚠️</span>
         Odevzdání je <strong>nevratné</strong>. Po odeslání již debriefing nelze upravit.
       </div>
 
