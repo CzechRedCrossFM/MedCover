@@ -80,10 +80,12 @@ class UserAccount(UserMixin, db.Model):  # type: ignore[misc]
     # iCal subscription tokens — 64-char hex, public but unguessable.
     # Generated automatically on account creation; regenerating invalidates
     # any existing calendar subscriptions using the old token.
-    ical_token = db.Column(db.String(64), nullable=True, unique=True, index=True, default=lambda: secrets.token_hex(32))
+    ical_token = db.Column(
+        db.String(64), nullable=False, unique=True, index=True, default=lambda: secrets.token_hex(32)
+    )
     # Separate token for the all-events iCal feed.
     ical_all_token = db.Column(
-        db.String(64), nullable=True, unique=True, index=True, default=lambda: secrets.token_hex(32)
+        db.String(64), nullable=False, unique=True, index=True, default=lambda: secrets.token_hex(32)
     )
     # Brute-force protection: track consecutive failed logins per account.
     # After LOGIN_MAX_ATTEMPTS failures the account is locked for LOGIN_LOCKOUT_MINUTES.

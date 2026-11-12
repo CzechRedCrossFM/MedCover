@@ -1,6 +1,7 @@
 """Tests for backup/restore engine and backup management routes."""
 
 import json
+import re
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
@@ -190,6 +191,39 @@ class TestRestoreFromZip:
             assert restored is not None
             assert isinstance(restored.reminder_sent_json, dict)
             assert "24" in restored.reminder_sent_json
+
+    def test_restore_regenerates_null_ical_tokens_from_older_backup(self, app, tmp_path):
+        """Backups taken before the iCal tokens became required may hold NULLs;
+        restore must fill them instead of violating NOT NULL."""
+
+        with app.app_context():
+            legacy = _make_user("legacy_tokens@example.com", "Legacy Tokens", Role.MEMBER)
+            other = _make_user("other_tokens@example.com", "Other Tokens", Role.MEMBER)
+            legacy_id, other_id = str(legacy.id), str(other.id)
+            other_tokens = (other.ical_token, other.ical_all_token)
+
+            name = export_to_zip()
+            with downloaded_backup(name) as path:
+                with zipfile.ZipFile(path) as zf:
+                    payload = json.loads(zf.read("backup.json"))
+            for row in payload["tables"]["user_account"]:
+                if str(row["id"]) == legacy_id:
+                    row["ical_token"] = None
+                    del row["ical_all_token"]
+            legacy_zip = tmp_path / "legacy.zip"
+            with zipfile.ZipFile(legacy_zip, "w") as zf:
+                zf.writestr("backup.json", json.dumps(payload))
+
+            restore_from_zip(legacy_zip)
+
+            _db.session.expire_all()
+            restored = _db.session.get(UserAccount, legacy_id)
+            assert restored is not None
+            assert re.fullmatch(r"[0-9a-f]{64}", restored.ical_token)
+            assert re.fullmatch(r"[0-9a-f]{64}", restored.ical_all_token)
+            assert restored.ical_token != restored.ical_all_token
+            untouched = _db.session.get(UserAccount, other_id)
+            assert (untouched.ical_token, untouched.ical_all_token) == other_tokens
 
     def test_restore_roundtrips_binary_column(self, app):
         """LargeBinary columns (e.g. signature_image) are hex-encoded on export by
