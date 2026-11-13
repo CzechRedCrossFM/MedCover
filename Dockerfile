@@ -28,4 +28,6 @@ COPY docker-entrypoint-scheduler.sh /docker-entrypoint-scheduler.sh
 RUN chmod +x /docker-entrypoint.sh /docker-entrypoint-scheduler.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]
+# Query timeout for the web process only, not the migrations in the entrypoint or
+# the scheduler; see app/db_timeout.py.
+CMD ["sh", "-c", "DB_QUERY_TIMEOUT_SECONDS=30 exec gunicorn -w 2 -k gthread --threads 4 --keep-alive 75 --max-requests 500 --max-requests-jitter 50 -b 0.0.0.0:${PORT:-5000} \"app:create_app()\""]

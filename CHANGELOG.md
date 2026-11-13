@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - URLs (`http(s)://` and `www.`) in event descriptions become links that open in a new tab. (#620)
 
 ### Changed
-- gunicorn runs `gthread` workers (4 threads) with `--keep-alive 75` and recycles workers after 500 ± 50 requests, so idle connections no longer cause worker timeouts and memory does not build up. `docker-compose.prod.yml` uses the Dockerfile `CMD` instead of its own command. (#619)
 - Repository and container image references point to the `CzechRedCrossFM` organisation. Before deploying, `ghcr.io/czechredcrossfm/medcover` must be pullable by the Azure container apps and the infra repository's image pin must use the new name. (#625)
 - The DEV seed creates a small synthetic dataset with dates relative to the run date instead of relying on real data. (#617)
 - Dependency updates: holidays 0.106, pytz 2026.5, playwright 1.64.0, pytest-playwright 0.10.0; dev tooling mypy 2.4.0, tox 4.67.5, pre-commit 4.7.0, pytest-env 1.8.0, faker 40.43.0; security-fix updates of the pinned requirements. (#594, #595, #596, #597, #598, #602, #603, #604, #605, #606, #615, #630, #633)

@@ -20,6 +20,7 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 from .config import check_backup_storage_env, config_by_name
 from .constants import RECORD_MODIFIED_MSG
 from .db_auth import attach_msi_token_auth, prepare_msi_auth
+from .db_timeout import attach_query_timeout
 from .extensions import csrf, db, login_manager
 from .extensions import mail as _flask_mail
 from .extensions import migrate
@@ -138,6 +139,7 @@ def create_app(
     csrf.init_app(app)
 
     attach_msi_token_auth(app, db)
+    attach_query_timeout(app, db)
 
     # Import only after db.init_app so Flask-Migrate sees the complete model registry.
     with app.app_context():
