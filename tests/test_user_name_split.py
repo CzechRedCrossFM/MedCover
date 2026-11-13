@@ -26,6 +26,7 @@ from app.models.user import (
     split_full_name,
 )
 from app.queries import active_users_list, user_name_matches
+from app.routes.import_events import _name_lookup
 from app.utils import person_sort_key
 from tests.conftest import _get_csrf, _make_event_in_status, _make_event_with_spot, _make_master_event, _make_user
 from tests.test_import_events import _minimal_event, _post_confirm
@@ -621,6 +622,14 @@ class TestImportNewUsers:
         assert html.index("user_0_surname") < html.index("user_0_first_name")
         assert 'name="user_0_name"' not in html
 
+    def test_preview_submits_name_as_sheet_key_without_gs_name(self, app, admin_client):
+        payload = {"version": 2, "users": [{"name": "Příklad Jiří", "email": "novy@example.com"}], "events": []}
+        html = admin_client.post(
+            "/import/events/preview",
+            data={"json_data": json.dumps(payload), "csrf_token": _get_csrf(admin_client, "/import/events/")},
+        ).data.decode()
+        assert '<input type="hidden" name="user_0_gs_name" value="Příklad Jiří">' in html
+
     def _confirm(self, app, admin_client, **parts):
         me_id = _make_master_event(app)
         return _post_confirm(
@@ -666,6 +675,13 @@ class TestPlaceholderRejected:
 
     def test_parse_can_allow_placeholder_first_name(self):
         assert parse_name_parts("Testovací", NAME_PLACEHOLDER, allow_placeholder_first_name=True) == (
+            "Testovací",
+            NAME_PLACEHOLDER,
+        )
+
+    @pytest.mark.parametrize("variant", ["(Doplnit)", "( doplnit )", "(DOPLNIT)"])
+    def test_allowed_placeholder_variant_is_canonicalised(self, variant):
+        assert parse_name_parts("Testovací", variant, allow_placeholder_first_name=True) == (
             "Testovací",
             NAME_PLACEHOLDER,
         )
@@ -785,6 +801,33 @@ class TestImportSignupsResolve:
             signups=["Příklad Jiří", "Příklad J.", "Ukázková Eva"],
         )
         assert self._assigned_emails(app) == ["a@example.com", "b@example.com"]
+
+    def test_three_distinct_signups_without_rp_are_all_assigned(self, app, admin_client):
+        # A, A, B, C without RP: three distinct people need three Zelenáč spots.
+        self._import(
+            app,
+            admin_client,
+            users=[
+                {"gs_name": "Příklad Jiří", "name": "Příklad Jiří", "email": "a@example.com"},
+                {"gs_name": "Příklad J.", "name": "Příklad J.", "email": "a@example.com"},
+                {"gs_name": "Ukázková Eva", "name": "Ukázková Eva", "email": "b@example.com"},
+                {"gs_name": "Vymyšlený Jiří", "name": "Vymyšlený Jiří", "email": "c@example.com"},
+            ],
+            signups=["Příklad Jiří", "Příklad J.", "Ukázková Eva", "Vymyšlený Jiří"],
+        )
+        assert self._assigned_emails(app) == ["a@example.com", "b@example.com", "c@example.com"]
+
+    def test_single_word_placeholder_variant_is_matched_on_reimport(self, app, admin_client):
+        self._import(
+            app,
+            admin_client,
+            users=[{"gs_name": "Pepa", "surname": "Pepa", "first_name": "( Doplnit )", "email": "pepa@example.com"}],
+            signups=[],
+        )
+        with app.app_context():
+            user = db.session.scalar(select(UserAccount).where(UserAccount.email == "pepa@example.com"))
+            assert user.first_name == NAME_PLACEHOLDER
+            assert _name_lookup([user])["pepa"] is user
 
     def test_responsible_person_listed_as_signup_is_assigned_once(self, app, admin_client):
         self._import(

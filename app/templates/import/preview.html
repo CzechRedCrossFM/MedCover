@@ -79,7 +79,7 @@
                 {# Hidden fields always submitted regardless of checkbox #}
                 <input type="hidden" name="user_{{ j }}_db_id"
                        value="{{ urow.existing.id if urow.existing else '' }}">
-                <input type="hidden" name="user_{{ j }}_gs_name" value="{{ urow.gs_name }}">
+                <input type="hidden" name="user_{{ j }}_gs_name" value="{{ urow.gs_name or urow.name }}">
                 <input type="hidden" name="user_{{ j }}_is_zdravotnik"
                        value="{{ '1' if urow.is_zdravotnik else '0' }}">
                 <input type="hidden" name="user_{{ j }}_is_ridic"

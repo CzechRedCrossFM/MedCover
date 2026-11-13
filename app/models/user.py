@@ -81,8 +81,11 @@ def parse_name_parts(
         raise ValueError("Jméno nesmí být prázdné.")
     if is_name_placeholder(surname):
         raise ValueError(f"Příjmení nesmí být „{NAME_PLACEHOLDER}“.")
-    if is_name_placeholder(first_name) and not allow_placeholder_first_name:
-        raise ValueError(f"Jméno nesmí být „{NAME_PLACEHOLDER}“.")
+    if is_name_placeholder(first_name):
+        if not allow_placeholder_first_name:
+            raise ValueError(f"Jméno nesmí být „{NAME_PLACEHOLDER}“.")
+        # store the canonical form, so the surname-only lookup of placeholder users finds it
+        first_name = NAME_PLACEHOLDER
     for label, value in (("Příjmení", surname), ("Jméno", first_name)):
         error = _name_part_length_error(label, value)
         if error:

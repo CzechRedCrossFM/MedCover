@@ -273,7 +273,8 @@ def _create_spots_and_assignments(
     zdravotnik_qual = _qual(zdravotnik_qual_id)
     zelenac_qual = _qual(zelenac_qual_id)
 
-    if total_people <= 3:
+    # The small layout has two Zelenáč spots; more distinct signups need one spot each.
+    if total_people <= 3 and signup_people <= 2:
         spots_def: list[tuple[str, bool, Qualification | None]] = [
             ("Zdravotník", False, zdravotnik_qual),
             ("Zelenáč", False, zelenac_qual),
