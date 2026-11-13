@@ -11,7 +11,7 @@ from app.models.event import Event, EventSpot, EventStatus, StaffingMode
 from app.models.master_event import MasterEvent
 from app.models.qualification import Qualification
 from app.models.role import Role
-from app.models.user import UserAccount
+from app.models.user import UserAccount, split_full_name
 from app.queries import rp_eligible_users_list
 from app.utils import get_app_tz
 from tests.conftest import _login, _make_event_with_spot, _make_user, _make_user_with_qual
@@ -59,7 +59,7 @@ class TestIsRpEligible:
     def test_user_with_no_quals_is_not_eligible(self, app):
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            u = UserAccount(email="noqual@test.com", name="No Qual", is_active=True)
+            u = UserAccount(email="noqual@test.com", surname="No", first_name="Qual", is_active=True)
             u.set_password("testpass123")
             u.roles = [role]
             db.session.add(u)
@@ -72,7 +72,7 @@ class TestIsRpEligible:
         with app.app_context():
             qual = db.session.get(Qualification, qual_id)
             viewer_role = db.session.scalar(db.select(Role).where(Role.name == Role.VIEWER))
-            u = UserAccount(email="viewer_rp@test.com", name="Viewer RP", is_active=True)
+            u = UserAccount(email="viewer_rp@test.com", surname="Viewer", first_name="RP", is_active=True)
             u.set_password("testpass123")
             u.roles = [viewer_role]
             u.qualifications = [qual]
@@ -945,9 +945,11 @@ class TestRpEligibleUsersSorting:
             # ASCII order: Chládek < Hora < Ivánek
             names = ["Ivánek Anna", "Chládek Pavel", "Hora Zdeněk"]
             for name in names:
+                surname, first_name = split_full_name(name)
                 u = UserAccount(
-                    email=f"{name.split()[0].lower()}@rp.cz",
-                    name=name,
+                    email=f"{surname.lower()}@rp.cz",
+                    surname=surname,
+                    first_name=first_name,
                     is_active=True,
                 )
                 u.set_password("pass")

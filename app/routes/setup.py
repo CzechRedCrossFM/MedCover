@@ -17,7 +17,7 @@ from app.extensions import db, mail
 from app.models.master_event import MasterEvent
 from app.models.role import ROLE_PERMISSIONS, Role
 from app.models.settings import AppSettings, get_settings
-from app.models.user import UserAccount
+from app.models.user import UserAccount, parse_name_parts
 
 setup_bp = Blueprint("setup", __name__, url_prefix="/setup")
 
@@ -120,14 +120,20 @@ def step3() -> str | Response:
         return redir
 
     if request.method == "POST":
-        full_name = request.form.get("full_name", "").strip()
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         password2 = request.form.get("password2", "")
 
+        try:
+            surname, first_name = parse_name_parts(request.form.get("surname"), request.form.get("first_name"))
+            name_error = None
+        except ValueError as exc:
+            surname = first_name = ""
+            name_error = str(exc)
+
         error = None
-        if not full_name:
-            error = "Zadejte celé jméno."
+        if name_error:
+            error = name_error
         elif not email:
             error = "Zadejte e-mail."
         elif len(password) < MIN_PASSWORD_LENGTH:
@@ -146,7 +152,7 @@ def step3() -> str | Response:
         _ensure_general_me()
 
         admin_role = db.session.scalar(db.select(Role).where(Role.name == "Admin"))
-        user = UserAccount(email=email, name=full_name, is_active=True)
+        user = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
         user.set_password(password)
         if admin_role:
             user.roles.append(admin_role)

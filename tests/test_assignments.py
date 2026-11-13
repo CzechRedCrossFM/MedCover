@@ -73,7 +73,7 @@ class TestAssignmentClaim:
             db.session.flush()
 
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator2@test.com", name="Creator2", is_active=True)
+            creator = UserAccount(email="creator2@test.com", surname="Creator2", first_name="Testovací", is_active=True)
             creator.set_password("testpass123")
             creator.roles = [role]
             db.session.add(creator)
@@ -319,7 +319,7 @@ class TestClaimEdgeCases:
             db.session.add(me)
             db.session.flush()
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="closedcreator@test.com", name="C", is_active=True)
+            creator = UserAccount(email="closedcreator@test.com", surname="C", first_name="Testovací", is_active=True)
             creator.set_password("testpass123")
             creator.roles = [role]
             db.session.add(creator)
@@ -570,7 +570,7 @@ class TestAssignOtherEdgeCases:
             db.session.add(me)
             db.session.flush()
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator3@test.com", name="C3", is_active=True)
+            creator = UserAccount(email="creator3@test.com", surname="C3", first_name="Testovací", is_active=True)
             creator.set_password("testpass123")
             creator.roles = [role]
             db.session.add(creator)

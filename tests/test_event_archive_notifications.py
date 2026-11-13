@@ -24,7 +24,7 @@ from app.models.master_event import MasterEvent
 from app.models.outbox import OutboxEmail
 from app.models.role import Role
 from app.models.settings import get_settings
-from app.models.user import UserAccount
+from app.models.user import UserAccount, split_full_name
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +43,8 @@ def _enable_archive_notifications(app):
 
 def _mk_member(email: str, name: str = "Member") -> UserAccount:
     role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-    u = UserAccount(email=email, name=name, is_active=True)
+    surname, first_name = split_full_name(name)
+    u = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
     u.set_password("pass")
     u.roles = [role]
     db.session.add(u)

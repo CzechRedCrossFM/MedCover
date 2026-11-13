@@ -36,8 +36,8 @@ def _plan(app):
 def test_matching_reuses_users_only_across_independent_hierarchies(app):
     with app.app_context():
         event, doctor, medic, driver = _plan(app)
-        first = _make_user("first@test.com", "First", Role.MEMBER)
-        second = _make_user("second@test.com", "Second", Role.MEMBER)
+        first = _make_user("first@test.com", "Testovací First", Role.MEMBER)
+        second = _make_user("second@test.com", "Testovací Second", Role.MEMBER)
         first.qualifications = [doctor, driver]
         second.qualifications = [doctor]
         event.assignments.append(Assignment(user=first))
@@ -69,8 +69,8 @@ def test_matching_reuses_users_only_across_independent_hierarchies(app):
 def test_requirement_lists_all_eligible_participants_without_fixing_assignment(app):
     with app.app_context():
         event, doctor, medic, driver = _plan(app)
-        first = _make_user("eligible-first@test.com", "First", Role.MEMBER)
-        second = _make_user("eligible-second@test.com", "Second", Role.MEMBER)
+        first = _make_user("eligible-first@test.com", "Testovací First", Role.MEMBER)
+        second = _make_user("eligible-second@test.com", "Testovací Second", Role.MEMBER)
         first.qualifications = [doctor, driver]
         second.qualifications = [doctor, driver]
         event.assignments.extend([Assignment(user=first), Assignment(user=second)])
@@ -78,7 +78,7 @@ def test_requirement_lists_all_eligible_participants_without_fixing_assignment(a
 
         summary = evaluate_staffing(event)
         by_name = {r.qualification.name: r for r in summary.requirements}
-        assert {u.name for u in by_name["Driver"].participants} == {"First", "Second"}
+        assert {u.name for u in by_name["Driver"].participants} == {"Testovací First", "Testovací Second"}
         assert by_name["Driver"].covered == 1
         assert by_name["Driver"].deficit == 0
 
@@ -138,8 +138,8 @@ def test_matching_reassigns_participants_to_cover_multiple_parents(app, flexible
         event.minimum_participants = 3
         users = sorted(
             [
-                _make_user("first-parent@test.com", "First", Role.MEMBER),
-                _make_user("second-parent@test.com", "Second", Role.MEMBER),
+                _make_user("first-parent@test.com", "Testovací First", Role.MEMBER),
+                _make_user("second-parent@test.com", "Testovací Second", Role.MEMBER),
             ],
             key=lambda user: str(user.id),
         )

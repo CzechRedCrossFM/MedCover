@@ -169,7 +169,7 @@ class TestNewUsersBlock:
 
     def test_collect_pending_only(self, app):
         with app.app_context():
-            u = _make_user("pending@test.cz", "Čekající", Role.MEMBER)
+            u = _make_user("pending@test.cz", "Čekající Testovací", Role.MEMBER)
             u.is_active = False
             u.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
             db.session.commit()
@@ -178,13 +178,13 @@ class TestNewUsersBlock:
             config = {**block.default_config, "show_pending_only": True}
             result = block.collect(db.session, config)
             names = [user.name for user in result["users"]]
-            assert "Čekající" in names
+            assert "Čekající Testovací" in names
 
 
 class TestUserActivityBlock:
     def test_collect_returns_activity_counts(self, app):
         with app.app_context():
-            u = _make_user("active@test.cz", "Aktivní", Role.ADMIN)
+            u = _make_user("active@test.cz", "Aktivní Testovací", Role.ADMIN)
             for i in range(3):
                 db.session.add(
                     AuditLogEntry(
@@ -203,7 +203,7 @@ class TestUserActivityBlock:
             assert result["title"] == "Aktivita uživatelů"
             # Should have at least one entry for our user
             assert len(result["entries"]) >= 1
-            entry = next((e for e in result["entries"] if e["name"] == "Aktivní"), None)
+            entry = next((e for e in result["entries"] if e["name"] == "Aktivní Testovací"), None)
             assert entry is not None
             assert entry["count"] >= 3
 

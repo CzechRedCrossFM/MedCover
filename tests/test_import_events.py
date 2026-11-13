@@ -15,7 +15,7 @@ from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventStatus
 from app.models.qualification import Qualification
 from app.models.role import Role
-from app.models.user import UserAccount
+from app.models.user import UserAccount, split_full_name
 from app.routes.import_events import (
     _existing_event_pairs,
     _match_responsible_person,
@@ -231,6 +231,7 @@ class TestMatchResponsiblePerson:
     class _FakeUser:
         def __init__(self, name: str) -> None:
             self.name = name
+            self.surname, self.first_name = split_full_name(name)
 
     def _users(self, *names: str) -> list:
         return [self._FakeUser(n) for n in names]
@@ -566,7 +567,9 @@ def _post_confirm(
         data[f"{p}include"] = "1" if u.get("include", True) else ""
         data[f"{p}db_id"] = u.get("db_id") or ""
         data[f"{p}gs_name"] = u.get("gs_name") or ""
-        data[f"{p}name"] = u.get("name") or ""
+        default_surname, default_first_name = split_full_name(u["name"]) if u.get("name") else ("", "")
+        data[f"{p}surname"] = u.get("surname", default_surname)
+        data[f"{p}first_name"] = u.get("first_name", default_first_name)
         data[f"{p}email"] = u.get("email") or ""
         data[f"{p}phone"] = u.get("phone") or ""
         data[f"{p}is_zdravotnik"] = "1" if u.get("is_zdravotnik") else "0"

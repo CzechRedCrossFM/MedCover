@@ -64,7 +64,7 @@
           <thead class="table-secondary">
             <tr>
               <th class="col-2p5r">Zahrnout</th>
-              <th class="minw-160">Jméno</th>
+              <th class="minw-160">Příjmení a jméno</th>
               <th class="minw-180">E-mail</th>
               <th class="minw-120">Telefon</th>
               <th class="col-110">Kvalifikace</th>
@@ -79,7 +79,7 @@
                 {# Hidden fields always submitted regardless of checkbox #}
                 <input type="hidden" name="user_{{ j }}_db_id"
                        value="{{ urow.existing.id if urow.existing else '' }}">
-                <input type="hidden" name="user_{{ j }}_gs_name" value="{{ urow.gs_name }}">
+                <input type="hidden" name="user_{{ j }}_gs_name" value="{{ urow.gs_name or urow.name }}">
                 <input type="hidden" name="user_{{ j }}_is_zdravotnik"
                        value="{{ '1' if urow.is_zdravotnik else '0' }}">
                 <input type="hidden" name="user_{{ j }}_is_ridic"
@@ -93,8 +93,12 @@
                 {% if urow.existing %}
                 <span>{{ urow.existing.name }}</span>
                 {% else %}
-                <input type="text" class="form-control form-control-sm"
-                       name="user_{{ j }}_name" value="{{ urow.name }}">
+                <div class="input-group input-group-sm">
+                  <input type="text" class="form-control" placeholder="Příjmení" aria-label="Příjmení"
+                         name="user_{{ j }}_surname" value="{{ urow.surname }}" maxlength="{{ name_part_max_length }}">
+                  <input type="text" class="form-control" placeholder="Jméno" aria-label="Jméno"
+                         name="user_{{ j }}_first_name" value="{{ urow.first_name }}" maxlength="{{ name_part_max_length }}">
+                </div>
                 {% endif %}
               </td>
               <td>
@@ -355,8 +359,8 @@
               {% endfor %}
               {# New users being imported in this batch (no DB id yet) #}
               {% for new_u in users_preview_rows if not new_u.existing %}
-              <option value="name:{{ new_u.name }}"
-                {% if not row.rp_user and row.responsible_person and new_u.name|lower == row.responsible_person|lower %}selected{% endif %}>
+              <option value="name:{{ new_u.gs_name or new_u.name }}"
+                {% if not row.rp_user and row.rp_key and new_u.key == row.rp_key %}selected{% endif %}>
                 {{ new_u.name }} ✨
               </option>
               {% endfor %}

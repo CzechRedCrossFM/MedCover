@@ -18,7 +18,7 @@ from app.models.invite import RegistrationInvite
 from app.models.outbox import OutboxEmail
 from app.models.qualification import Qualification
 from app.models.role import ROLE_PERMISSIONS, Role
-from app.models.user import EventTimeFormat, UserAccount
+from app.models.user import EventTimeFormat, UserAccount, split_full_name
 from app.queries import active_users_list
 from tests.conftest import _make_user
 
@@ -39,7 +39,7 @@ class TestUserProfile:
     def test_coordinator_can_update_own_name(self, app: object, coordinator_client: object) -> None:
         resp = coordinator_client.post(
             "/users/profile",
-            data={"action": "profile", "name": "Nové Jméno", "version": "1"},
+            data={"action": "profile", "surname": "Nové", "first_name": "Jméno", "version": "1"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -52,16 +52,46 @@ class TestUserProfile:
     def test_coordinator_empty_name_rejected(self, coordinator_client: object) -> None:
         resp = coordinator_client.post(
             "/users/profile",
-            data={"action": "profile", "name": "", "version": "1"},
+            data={"action": "profile", "surname": "", "first_name": "Testovací", "version": "1"},
+            follow_redirects=True,
+        )
+        assert "Příjmení nesmí být prázdné".encode() in resp.data
+
+    def test_coordinator_empty_first_name_rejected(self, app: object, coordinator_client: object) -> None:
+        resp = coordinator_client.post(
+            "/users/profile",
+            data={"action": "profile", "surname": "Testovací", "first_name": "   ", "version": "1"},
             follow_redirects=True,
         )
         assert "Jméno nesmí být prázdné".encode() in resp.data
+        with app.app_context():
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "coordinator@test.com"))
+            assert user is not None
+            assert user.name == "Test Coordinator"
+
+    def test_coordinator_changing_only_first_name_audits_only_that_part(
+        self, app: object, coordinator_client: object
+    ) -> None:
+        resp = coordinator_client.post(
+            "/users/profile",
+            data={"action": "profile", "surname": "Test", "first_name": "Nové", "version": "1"},
+            follow_redirects=True,
+        )
+        assert "Profil byl uložen".encode() in resp.data
+        with app.app_context():
+            entry = db.session.scalars(
+                db.select(AuditLogEntry)
+                .where(AuditLogEntry.entity_type == "UserAccount")
+                .order_by(AuditLogEntry.id.desc())
+            ).first()
+            assert entry is not None
+            assert list(entry.changes_json) == ["first_name"]
 
     def test_member_cannot_change_own_name(self, app: object, member_client: object) -> None:
         """Members lack user.edit_name; a POSTed name field must be silently ignored (#457)."""
         resp = member_client.post(
             "/users/profile",
-            data={"action": "profile", "name": "Hacker Name", "version": "1"},
+            data={"action": "profile", "surname": "Hacker", "first_name": "Name", "version": "1"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -78,13 +108,13 @@ class TestUserProfile:
                 )
             ).all()
             for entry in entries:
-                assert "name" not in (entry.changes or {})
+                assert not {"surname", "first_name"} & set(entry.changes_json or {})
 
     def test_member_empty_name_not_rejected(self, app: object, member_client: object) -> None:
         """Empty name from Member is ignored, not treated as an error (#457)."""
         resp = member_client.post(
             "/users/profile",
-            data={"action": "profile", "name": "", "phone": "123456789", "version": "1"},
+            data={"action": "profile", "surname": "", "first_name": "Testovací", "phone": "123456789", "version": "1"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -114,21 +144,24 @@ class TestUserProfile:
         resp = member_client.get("/users/profile")
         assert resp.status_code == 200
         html = resp.data.decode()
-        match = re.search(r'<input\b[^>]*\bid="name"[^>]*>', html, re.DOTALL)
-        assert match is not None, "name input not found in profile page"
-        tag = match.group(0)
-        assert "disabled" in tag
-        assert 'name="name"' not in tag
+        for field in ("surname", "first_name"):
+            match = re.search(rf'<input\b[^>]*\bid="{field}"[^>]*>', html, re.DOTALL)
+            assert match is not None, f"{field} input not found in profile page"
+            tag = match.group(0)
+            assert "disabled" in tag
+            assert f'name="{field}"' not in tag
 
     def test_profile_page_name_input_enabled_for_coordinator(self, coordinator_client: object) -> None:
         resp = coordinator_client.get("/users/profile")
         assert resp.status_code == 200
         html = resp.data.decode()
-        match = re.search(r'<input\b[^>]*\bid="name"[^>]*>', html, re.DOTALL)
-        assert match is not None, "name input not found in profile page"
-        tag = match.group(0)
-        assert "disabled" not in tag
-        assert 'name="name"' in tag
+        assert html.index('id="surname"') < html.index('id="first_name"')
+        for field in ("surname", "first_name"):
+            match = re.search(rf'<input\b[^>]*\bid="{field}"[^>]*>', html, re.DOTALL)
+            assert match is not None, f"{field} input not found in profile page"
+            tag = match.group(0)
+            assert "disabled" not in tag
+            assert f'name="{field}"' in tag
 
     def test_dark_mode_toggle(self, app: object, member_client: object) -> None:
         resp = member_client.post(
@@ -260,7 +293,7 @@ class TestAdminUserList:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             qualification = Qualification(name="Qualification in user views")
-            user = UserAccount(email="qualified@test.com", name="Qualified User", is_active=True)
+            user = UserAccount(email="qualified@test.com", surname="Qualified", first_name="User", is_active=True)
             user.set_password("pass1234")
             user.roles = [role]
             user.qualifications = [qualification]
@@ -315,10 +348,10 @@ class TestAdminUserList:
         with app.app_context():
             admin_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
             # User with no roles has no permissions at all
-            norole = UserAccount(email="norole117@test.com", name="NoRole 117", is_active=True)
+            norole = UserAccount(email="norole117@test.com", surname="NoRole", first_name="117", is_active=True)
             norole.set_password("pass1234")
             norole.roles = []
-            target = UserAccount(email="target117@test.com", name="Target 117", is_active=True)
+            target = UserAccount(email="target117@test.com", surname="Target", first_name="117", is_active=True)
             target.set_password("pass1234")
             target.roles = [admin_role]
             db.session.add_all([norole, target])
@@ -333,7 +366,9 @@ class TestAdminUserList:
     def test_activate_user(self, app: object, admin_client: object) -> None:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            inactive = UserAccount(email="inactive@test.com", name="Inactive", is_active=False)
+            inactive = UserAccount(
+                email="inactive@test.com", surname="Inactive", first_name="Testovací", is_active=False
+            )
             inactive.set_password("pass1234")
             inactive.roles = [role]
             db.session.add(inactive)
@@ -349,7 +384,7 @@ class TestAdminUserList:
     def test_deactivate_user(self, app: object, admin_client: object) -> None:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            target = UserAccount(email="target@test.com", name="Target", is_active=True)
+            target = UserAccount(email="target@test.com", surname="Target", first_name="Testovací", is_active=True)
             target.set_password("pass1234")
             target.roles = [role]
             db.session.add(target)
@@ -367,7 +402,7 @@ class TestAdminEditUser:
     def _create_user(self, app: object, email: str = "editable@test.com") -> str:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            user = UserAccount(email=email, name="Editable User", is_active=True)
+            user = UserAccount(email=email, surname="Editable", first_name="User", is_active=True)
             user.set_password("pass1234")
             user.roles = [role]
             db.session.add(user)
@@ -379,7 +414,8 @@ class TestAdminEditUser:
         resp = admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "New Name",
+                "surname": "New",
+                "first_name": "Name",
                 "email": "newemail@test.com",
                 "phone": "+420123456789",
                 "version": "1",
@@ -399,7 +435,8 @@ class TestAdminEditUser:
         resp = member_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "Hacker",
+                "surname": "Hacker",
+                "first_name": "Testovací",
                 "email": "hacked@test.com",
                 "phone": "",
             },
@@ -410,7 +447,7 @@ class TestAdminEditUser:
         uid = self._create_user(app, "orig@test.com")
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            other = UserAccount(email="taken@test.com", name="Other", is_active=True)
+            other = UserAccount(email="taken@test.com", surname="Other", first_name="Testovací", is_active=True)
             other.set_password("pass1234")
             other.roles = [role]
             db.session.add(other)
@@ -418,7 +455,8 @@ class TestAdminEditUser:
         resp = admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "Orig",
+                "surname": "Orig",
+                "first_name": "Testovací",
                 "email": "taken@test.com",
                 "phone": "",
                 "version": "1",
@@ -437,7 +475,8 @@ class TestAdminEditUser:
         resp = admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "",
+                "surname": "",
+                "first_name": "Testovací",
                 "email": "noname@test.com",
                 "phone": "",
                 "version": "1",
@@ -453,7 +492,8 @@ class TestAdminEditUser:
         admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "Audited Name",
+                "surname": "Audited",
+                "first_name": "Name",
                 "email": "audit_edit@test.com",
                 "phone": "",
                 "version": "1",
@@ -475,14 +515,15 @@ class TestAdminEditUser:
         with app.app_context():
             user = db.session.get(UserAccount, uid)
             assert user is not None
-            current_name = user.name
+            current_surname, current_first_name = user.surname, user.first_name
             current_email = user.email
             current_version = user.version
             role_ids = [str(r.id) for r in user.roles]
         admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": current_name,
+                "surname": current_surname,
+                "first_name": current_first_name,
                 "email": current_email,
                 "phone": "",
                 "role_ids": role_ids,
@@ -508,7 +549,7 @@ class TestAdminEditUser:
             qual_id = qual.id
             user = db.session.get(UserAccount, uid)
             assert user is not None
-            current_name = user.name
+            current_surname, current_first_name = user.surname, user.first_name
             current_email = user.email
             current_version = user.version
             role_ids = [str(r.id) for r in user.roles]
@@ -516,7 +557,8 @@ class TestAdminEditUser:
         admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": current_name,
+                "surname": current_surname,
+                "first_name": current_first_name,
                 "email": current_email,
                 "phone": "",
                 "role_ids": role_ids,
@@ -544,7 +586,8 @@ class TestAdminEditUser:
         admin_client.post(
             f"/users/{uid}/save",
             data={
-                "name": "Changed Name",
+                "surname": "Changed",
+                "first_name": "Name",
                 "email": "infoonly@test.com",
                 "phone": "",
                 "role_ids": role_ids,
@@ -592,7 +635,7 @@ class TestInvites:
     def test_batch_invites_normalize_deduplicate_and_skip_existing(self, app: object, admin_client: object) -> None:
         admin_client.post("/users/invites/create", data={"email": "pending@example.com"})
         with app.app_context():
-            user = UserAccount(email="existing@example.com", name="Existing", is_active=True)
+            user = UserAccount(email="existing@example.com", surname="Existing", first_name="Testovací", is_active=True)
             user.set_password("pass1234")
             db.session.add(user)
             db.session.commit()
@@ -670,7 +713,8 @@ class TestInvites:
             response = client.post(
                 f"/auth/register/{token}",
                 data={
-                    "full_name": "Invited user",
+                    "surname": "Invited",
+                    "first_name": "user",
                     "password": "securepass123",
                     "password2": "securepass123",
                     "qualification_ids": [str(removed_id)],
@@ -756,7 +800,9 @@ class TestInvites:
     def test_invite_blocked_for_existing_user(self, app: object, admin_client: object) -> None:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            existing = UserAccount(email="existing@example.com", name="Existing", is_active=True)
+            existing = UserAccount(
+                email="existing@example.com", surname="Existing", first_name="Testovací", is_active=True
+            )
             existing.set_password("pass1234")
             existing.roles = [role]
             db.session.add(existing)
@@ -775,7 +821,9 @@ class TestInvites:
 
     def test_invite_blocked_for_existing_user_with_mixed_case_email(self, app: object, admin_client: object) -> None:
         with app.app_context():
-            existing = UserAccount(email="Mixed.Case@Example.com", name="Mixed", is_active=True)
+            existing = UserAccount(
+                email="Mixed.Case@Example.com", surname="Mixed", first_name="Testovací", is_active=True
+            )
             existing.set_password("pass1234")
             db.session.add(existing)
             db.session.commit()
@@ -901,7 +949,7 @@ class TestInvites:
         with app.app_context():
 
             admin_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator@test.com", name="Creator", is_active=True)
+            creator = UserAccount(email="creator@test.com", surname="Creator", first_name="Testovací", is_active=True)
             creator.set_password("pass1234")
             creator.roles = [admin_role]
             db.session.add(creator)
@@ -921,7 +969,7 @@ class TestInvites:
         with app.app_context():
 
             admin_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="creator2@test.com", name="Creator2", is_active=True)
+            creator = UserAccount(email="creator2@test.com", surname="Creator2", first_name="Testovací", is_active=True)
             creator.set_password("pass1234")
             creator.roles = [admin_role]
             db.session.add(creator)
@@ -946,7 +994,9 @@ class TestInvites:
         with app.app_context():
 
             admin_role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            creator = UserAccount(email="roletest_creator@test.com", name="RoleCreator", is_active=True)
+            creator = UserAccount(
+                email="roletest_creator@test.com", surname="RoleCreator", first_name="Testovací", is_active=True
+            )
             creator.set_password("pass1234")
             creator.roles = [admin_role]
             db.session.add(creator)
@@ -958,7 +1008,8 @@ class TestInvites:
         client.post(
             f"/auth/register/{token}",
             data={
-                "full_name": "Role Test User",
+                "surname": "Role",
+                "first_name": "Test User",
                 "password": "pass1234",
                 "password2": "pass1234",
             },
@@ -1010,7 +1061,8 @@ class TestPhoneValidationProfile:
             "/users/profile",
             data={
                 "action": "profile",
-                "name": "Test Member",
+                "surname": "Test",
+                "first_name": "Member",
                 "phone": phone,
                 "version": "1",
             },
@@ -1025,7 +1077,8 @@ class TestPhoneValidationProfile:
             "/users/profile",
             data={
                 "action": "profile",
-                "name": "Test Member",
+                "surname": "Test",
+                "first_name": "Member",
                 "phone": phone,
                 "version": "1",
             },
@@ -1052,7 +1105,7 @@ class TestPhoneValidationAdminEdit:
     def _create_user(self, app: object) -> str:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            user = UserAccount(email="phonetarget@test.com", name="Phone Target", is_active=True)
+            user = UserAccount(email="phonetarget@test.com", surname="Phone", first_name="Target", is_active=True)
             user.set_password("pass1234")
             user.roles = [role]
             db.session.add(user)
@@ -1064,7 +1117,13 @@ class TestPhoneValidationAdminEdit:
         uid = self._create_user(app)
         resp = admin_client.post(
             f"/users/{uid}/save",
-            data={"name": "Phone Target", "email": "phonetarget@test.com", "phone": phone, "version": "1"},
+            data={
+                "surname": "Phone",
+                "first_name": "Target",
+                "email": "phonetarget@test.com",
+                "phone": phone,
+                "version": "1",
+            },
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -1075,7 +1134,13 @@ class TestPhoneValidationAdminEdit:
         uid = self._create_user(app)
         resp = admin_client.post(
             f"/users/{uid}/save",
-            data={"name": "Phone Target", "email": "phonetarget@test.com", "phone": phone, "version": "1"},
+            data={
+                "surname": "Phone",
+                "first_name": "Target",
+                "email": "phonetarget@test.com",
+                "phone": phone,
+                "version": "1",
+            },
             follow_redirects=True,
         )
         assert "Neplatný formát telefonního čísla".encode() in resp.data
@@ -1087,7 +1152,13 @@ class TestPhoneValidationAdminEdit:
         uid = self._create_user(app)
         resp = admin_client.post(
             f"/users/{uid}/save",
-            data={"name": "Phone Target", "email": "phonetarget@test.com", "phone": phone, "version": "1"},
+            data={
+                "surname": "Phone",
+                "first_name": "Target",
+                "email": "phonetarget@test.com",
+                "phone": phone,
+                "version": "1",
+            },
             follow_redirects=True,
         )
         assert "Neplatný formát telefonního čísla".encode() not in resp.data
@@ -1109,7 +1180,7 @@ class TestBatchAction:
             member_role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
             users = []
             for i in range(count):
-                u = UserAccount(email=f"batchuser{i}@test.cz", name=f"Batch User {i}", is_active=True)
+                u = UserAccount(email=f"batchuser{i}@test.cz", surname="Batch", first_name=f"User {i}", is_active=True)
                 u.set_password("pass")
                 u.roles = [member_role]
                 db.session.add(u)
@@ -1278,7 +1349,7 @@ class TestUserListFiltersAndSort:
         """GET /users/?role=Viewer returns only Viewer users."""
         with app.app_context():
             viewer_role = db.session.scalar(db.select(Role).where(Role.name == "Viewer"))
-            u = UserAccount(email="vieweronly@test.cz", name="Viewer Only", is_active=True)
+            u = UserAccount(email="vieweronly@test.cz", surname="Viewer", first_name="Only", is_active=True)
             u.set_password("pass")
             u.roles = [viewer_role]
             db.session.add(u)
@@ -1311,7 +1382,8 @@ class TestUserListFiltersAndSort:
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
             user = UserAccount(
                 email="timezone@test.cz",
-                name="Timezone User",
+                surname="Timezone",
+                first_name="User",
                 is_active=True,
                 created_at=datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc),
                 last_login_at=datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc),
@@ -1331,15 +1403,16 @@ class TestUserListFiltersAndSort:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
             # Names that differ between Czech and ASCII sort:
-            # Czech order: Hora < Chládek < Ivánek < Šťastný
-            # ASCII order: Chládek < Hora < Ivánek < Šťastný (C < H)
+            # Czech order: Hypotetický < Chimérický < Imaginární < Šuplíkový
+            # ASCII order: Chimérický < Hypotetický < Imaginární < Šuplíkový (C < H)
             for name, email in [
-                ("Šťastný Jan", "stastny@test.cz"),
-                ("Chládek Petr", "chladek@test.cz"),
-                ("Hora David", "hora@test.cz"),
-                ("Ivánek Tomáš", "ivanek@test.cz"),
+                ("Šuplíkový Rudolf", "suplikovy@test.cz"),
+                ("Chimérický Jiří", "chimericky@test.cz"),
+                ("Hypotetický Ondřej", "hypoteticky@test.cz"),
+                ("Imaginární Bohumil", "imaginarni@test.cz"),
             ]:
-                u = UserAccount(email=email, name=name, is_active=True)
+                surname, first_name = split_full_name(name)
+                u = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
                 u.set_password("pass")
                 u.roles = [role]
                 db.session.add(u)
@@ -1348,10 +1421,10 @@ class TestUserListFiltersAndSort:
         resp = admin_client.get("/users/?sort=name&dir=asc")
         html = resp.data.decode()
         # In Czech: H < Ch < I < Š
-        pos_hora = html.find("Hora David")
-        pos_chladek = html.find("Chládek Petr")
-        pos_ivanek = html.find("Ivánek Tomáš")
-        pos_stastny = html.find("Šťastný Jan")
+        pos_hora = html.find("Hypotetický Ondřej")
+        pos_chladek = html.find("Chimérický Jiří")
+        pos_ivanek = html.find("Imaginární Bohumil")
+        pos_stastny = html.find("Šuplíkový Rudolf")
         assert pos_hora != -1
         assert pos_chladek != -1
         assert pos_ivanek != -1
@@ -1362,19 +1435,19 @@ class TestUserListFiltersAndSort:
         """?q=... matches names case-insensitively (Czech CI collation)."""
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            u = UserAccount(email="searchme@test.cz", name="Novák Josef", is_active=True)
+            u = UserAccount(email="searchme@test.cz", surname="Testovací", first_name="Bohumil", is_active=True)
             u.set_password("pass")
             u.roles = [role]
             db.session.add(u)
             db.session.commit()
 
         # Lowercase query must still find mixed-case name.
-        resp = admin_client.get("/users/?q=novák")
+        resp = admin_client.get("/users/?q=testovací")
         assert resp.status_code == 200
         assert b"searchme@test.cz" in resp.data
 
         # Uppercase query must still find lowercase-ish name.
-        resp = admin_client.get("/users/?q=NOVÁK")
+        resp = admin_client.get("/users/?q=TESTOVACÍ")
         assert resp.status_code == 200
         assert b"searchme@test.cz" in resp.data
 
@@ -1382,7 +1455,7 @@ class TestUserListFiltersAndSort:
         """?q=... matches emails case-insensitively."""
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            u = UserAccount(email="MixedCase@Test.Cz", name="Mixed Case", is_active=True)
+            u = UserAccount(email="MixedCase@Test.Cz", surname="Mixed", first_name="Case", is_active=True)
             u.set_password("pass")
             u.roles = [role]
             db.session.add(u)
@@ -1406,7 +1479,8 @@ class TestUserListFiltersAndSort:
             role = db.session.scalar(db.select(Role).where(Role.name == "Member"))
             recent = UserAccount(
                 email="recent@test.cz",
-                name="Recent Login",
+                surname="Recent",
+                first_name="Login",
                 is_active=True,
                 last_login_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
             )
@@ -1414,7 +1488,8 @@ class TestUserListFiltersAndSort:
             recent.roles = [role]
             old = UserAccount(
                 email="old@test.cz",
-                name="Old Login",
+                surname="Old",
+                first_name="Login",
                 is_active=True,
                 last_login_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
             )
@@ -1422,7 +1497,8 @@ class TestUserListFiltersAndSort:
             old.roles = [role]
             never = UserAccount(
                 email="never@test.cz",
-                name="Never Logged In",
+                surname="Never",
+                first_name="Logged In",
                 is_active=True,
                 last_login_at=None,
             )
@@ -1456,7 +1532,9 @@ class TestUserArchive:
         """Create a plain member user to be archived and return their id."""
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            u = UserAccount(email="target@archive.test", name="Archivovatelný", is_active=True)
+            u = UserAccount(
+                email="target@archive.test", surname="Archivovatelný", first_name="Testovací", is_active=True
+            )
             u.set_password("pass")
             u.roles = [role]
             db.session.add(u)
@@ -1576,7 +1654,7 @@ class TestUserArchive:
         uid = self._create_target(app)
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            other = UserAccount(email="other@test.com", name="Other", is_active=True)
+            other = UserAccount(email="other@test.com", surname="Other", first_name="Testovací", is_active=True)
             other.set_password("pass")
             other.roles = [role]
             db.session.add(other)
@@ -1636,7 +1714,8 @@ class TestManualUserCreate:
             "/users/create",
             data={
                 "csrf_token": "test",
-                "name": "Testovací Uživatel",
+                "surname": "Testovací",
+                "first_name": "Uživatel",
                 "email": "manual.create@test.com",
                 "phone": "",
             },
@@ -1656,7 +1735,8 @@ class TestManualUserCreate:
             "/users/create",
             data={
                 "csrf_token": "test",
-                "name": "Duplikát",
+                "surname": "Duplikát",
+                "first_name": "Testovací",
                 "email": "admin@test.com",  # already exists
                 "phone": "",
             },
@@ -1670,14 +1750,15 @@ class TestManualUserCreate:
             "/users/create",
             data={
                 "csrf_token": "test",
-                "name": "",
+                "surname": "",
+                "first_name": "Testovací",
                 "email": "new@test.com",
                 "phone": "",
             },
             follow_redirects=True,
         )
         assert resp.status_code == 200
-        assert "Jméno nesmí být prázdné" in resp.data.decode()
+        assert "Příjmení nesmí být prázdné" in resp.data.decode()
 
     def test_create_user_writes_audit_log(self, app: object, admin_client: object) -> None:
 
@@ -1685,7 +1766,8 @@ class TestManualUserCreate:
             "/users/create",
             data={
                 "csrf_token": "test",
-                "name": "Audit Test",
+                "surname": "Audit",
+                "first_name": "Test",
                 "email": "audit.manual@test.com",
                 "phone": "",
             },
@@ -1721,7 +1803,7 @@ class TestUserOptimisticLocking:
     def test_update_profile_stale_version_flashes(self, app: object, member_client: object) -> None:
         resp = member_client.post(
             "/users/profile",
-            data={"action": "profile", "name": "New Name", "version": "9999"},
+            data={"action": "profile", "surname": "New", "first_name": "Name", "version": "9999"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -1773,7 +1855,7 @@ class TestUserOptimisticLocking:
     def test_save_user_stale_version_flashes(self, app: object, admin_client: object) -> None:
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.MEMBER))
-            target = UserAccount(email="staletest@test.com", name="Original Name", is_active=True)
+            target = UserAccount(email="staletest@test.com", surname="Original", first_name="Name", is_active=True)
             target.set_password("pass1234")
             target.roles = [role]
             db.session.add(target)
@@ -1781,7 +1863,13 @@ class TestUserOptimisticLocking:
             uid = str(target.id)
         resp = admin_client.post(
             f"/users/{uid}/save",
-            data={"name": "Changed Name", "email": "staletest@test.com", "phone": "", "version": "9999"},
+            data={
+                "surname": "Changed",
+                "first_name": "Name",
+                "email": "staletest@test.com",
+                "phone": "",
+                "version": "9999",
+            },
             follow_redirects=True,
         )
         assert resp.status_code == 200

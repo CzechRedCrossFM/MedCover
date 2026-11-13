@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 import sqlalchemy as sa
 from flask import Blueprint, Response, render_template, request
 from flask_login import login_required
-from sqlalchemy import collate
 
 from app.extensions import db
 from app.models.audit import AuditLogEntry
@@ -15,7 +14,8 @@ from app.models.outbox import OutboxEmail
 from app.models.role import ALL_PERMISSIONS, ROLE_PERMISSIONS
 from app.models.settings import get_settings
 from app.models.user import UserAccount
-from app.utils import CS_COLLATION, get_or_404, last_page_redirect, page_arg, require_permission
+from app.queries import user_name_order
+from app.utils import get_or_404, last_page_redirect, page_arg, require_permission
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -248,7 +248,7 @@ def audit_log_list() -> str | Response:
         .where(
             UserAccount.id.in_(db.select(AuditLogEntry.actor_id).where(AuditLogEntry.actor_id.isnot(None)).distinct())
         )
-        .order_by(collate(UserAccount.name, CS_COLLATION))
+        .order_by(*user_name_order())
     ).all()
 
     return render_template(

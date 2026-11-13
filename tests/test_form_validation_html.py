@@ -68,7 +68,9 @@ class TestNoPreinjectedValidity:
 
         with app.app_context():
             role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-            inviter = UserAccount(email="reg_inviter@test.com", name="Inviter", is_active=True)
+            inviter = UserAccount(
+                email="reg_inviter@test.com", surname="Inviter", first_name="Testovací", is_active=True
+            )
             inviter.set_password("testpass123")
             inviter.roles = [role]
             db.session.add(inviter)

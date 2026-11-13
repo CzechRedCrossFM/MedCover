@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'macros/person_name.html' import name_inputs %}
 {% from 'macros/help.html' import help_icon %}
 {% from 'macros/badges.html' import badge_secondary %}
 {% from 'macros/people.html' import avatar with context %}
@@ -18,17 +19,9 @@
           <input type="hidden" name="action" value="profile">
           <input type="hidden" name="version" value="{{ user.version }}">
           <div class="row g-3">
-            <div class="col-12 col-md-6">
             {% set can_edit_name = current_user.has_permission('user.edit_name') %}
-            <label for="name" class="form-label">Celé jméno <small class="text-muted fw-normal">(Příjmení Jméno)</small>
-              {% if can_edit_name %}
-                {{ help_icon("Zadejte nejdříve příjmení, pak jméno — např. Novák Jan. Zobrazuje se ve všech přehledech a výkazech.") }}
-              {% else %}
-                {{ help_icon("Nelze změnit — kontaktujte administrátora.") }}
-              {% endif %}
-            </label>
-              <input type="text" class="form-control" id="name" {% if can_edit_name %}name="name" required{% else %}disabled{% endif %} value="{{ user.name }}" placeholder="Novák Jan">
-            </div>
+            {{ name_inputs(user.surname, user.first_name, wrapper_class="col-12 col-md-6", disabled=not can_edit_name,
+                           help=("Příjmení a jméno se zobrazují ve všech přehledech a výkazech jako „Příjmení Jméno“." if can_edit_name else "Nelze změnit — kontaktujte administrátora.")) }}
             <div class="col-12 col-md-6">
               <label for="email" class="form-label">E-mail
                 {{ help_icon("Přihlašovací e-mail. Nelze změnit — kontaktujte administrátora.") }}

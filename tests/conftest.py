@@ -24,7 +24,7 @@ from app.models.master_event import MasterEvent
 from app.models.qualification import Qualification
 from app.models.role import ROLE_PERMISSIONS, Role
 from app.models.settings import AppSettings
-from app.models.user import UserAccount
+from app.models.user import UserAccount, split_full_name
 
 if TYPE_CHECKING:
     pass
@@ -537,7 +537,8 @@ def _make_user(
 ) -> UserAccount:
     """Create a user in the current app context and return it."""
     role = _db.session.scalar(_db.select(Role).where(Role.name == role_name))
-    user = UserAccount(email=email, name=name, is_active=True)
+    surname, first_name = split_full_name(name)
+    user = UserAccount(email=email, surname=surname, first_name=first_name, is_active=True)
     user.set_password(password)
     user.roles = [role]
     _db.session.add(user)

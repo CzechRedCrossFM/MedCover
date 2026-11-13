@@ -9,6 +9,8 @@ Routes:
 
 import json
 import secrets
+import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,7 +26,8 @@ from app.models.event import Event, EventSpot, EventStatus, EventType
 from app.models.master_event import MasterEvent
 from app.models.qualification import Qualification
 from app.models.role import Role
-from app.models.user import UserAccount
+from app.models.user import NAME_PLACEHOLDER, UserAccount, display_name, parse_name_parts, split_full_name
+from app.queries import user_name_order
 from app.routes.assignments import auto_close_if_full
 from app.utils import CS_COLLATION, audit, get_app_tz, require_permission
 
@@ -36,6 +39,25 @@ import_bp = Blueprint("import_events", __name__, url_prefix="/import")
 def _require_import_permission() -> None:
     """Abort 403 unless the current user may import events."""
     require_permission("admin.manage_settings")
+
+
+def _name_key(name: str | None) -> str:
+    """Whitespace-collapsed, case-folded key used to compare sheet names with user names."""
+    return " ".join((name or "").split()).lower()
+
+
+def _name_lookup(users: Iterable[UserAccount]) -> dict[str, UserAccount]:
+    """Map normalised display names to users.
+
+    Users whose first name is still the placeholder are also reachable by surname alone,
+    because that is how a single-word sheet name reads.
+    """
+    users = list(users)
+    lookup = {_name_key(u.name): u for u in users}
+    for u in users:
+        if u.first_name == NAME_PLACEHOLDER:
+            lookup.setdefault(_name_key(u.surname), u)
+    return lookup
 
 
 def _match_responsible_person(
@@ -55,26 +77,19 @@ def _match_responsible_person(
 
     name_str = name_str.strip()
 
-    # Build lookup maps
-    by_name: dict[str, UserAccount] = {u.name: u for u in users}
-    by_name_lower: dict[str, UserAccount] = {u.name.lower(): u for u in users}
+    lookup = _name_lookup(users)
 
-    # 1. Exact
-    if name_str in by_name:
-        return by_name[name_str], "exact"
-
-    # 2. Case-insensitive
-    if name_str.lower() in by_name_lower:
-        return by_name_lower[name_str.lower()], "iexact"
+    # 1. Exact, then 2. case/whitespace-insensitive
+    matched = lookup.get(_name_key(name_str))
+    if matched:
+        return matched, "exact" if name_str == matched.name else "iexact"
 
     # 3. Reversed — safety net for any name that arrives in the wrong order
     parts = name_str.split()
     if len(parts) == 2:
-        reversed_name = f"{parts[1]} {parts[0]}"
-        if reversed_name in by_name:
-            return by_name[reversed_name], "reversed"
-        if reversed_name.lower() in by_name_lower:
-            return by_name_lower[reversed_name.lower()], "reversed"
+        matched = lookup.get(_name_key(f"{parts[1]} {parts[0]}"))
+        if matched:
+            return matched, "reversed"
 
     return None, "none"
 
@@ -82,10 +97,15 @@ def _match_responsible_person(
 def _process_import_users(
     form: dict,
     user_count: int,
-) -> tuple[int, int]:
+    rejected_users: list[str],
+) -> tuple[int, int, dict[str, UserAccount]]:
     """Create new users and update qualifications of existing users from the import form.
 
-    Returns (created_count, updated_quals_count).
+    Included rows whose name parts fail validation are skipped and described in *rejected_users*.
+
+    Returns (created_count, updated_quals_count, sheet_name_to_user) where the mapping is keyed by
+    the normalised sheet name each preview row was built from, so signups and responsible persons
+    resolve to the user that row ended up as, whatever the parts were edited to.
     """
 
     def _qual_by_substr(keyword: str) -> Qualification | None:
@@ -103,15 +123,17 @@ def _process_import_users(
     member_role = db.session.scalars(db.select(Role).where(Role.name == "Member")).first()
 
     pre_existing = list(db.session.scalars(db.select(UserAccount)).all())
-    existing_by_name: dict[str, UserAccount] = {u.name.lower(): u for u in pre_existing}
+    existing_by_name = _name_lookup(pre_existing)
     existing_by_email: dict[str, UserAccount] = {u.email.lower(): u for u in pre_existing if u.email}
 
     created = 0
     updated_quals = 0
+    sheet_name_to_user: dict[str, UserAccount] = {}
 
     for i in range(user_count):
         uprefix = f"user_{i}_"
         db_id = form.get(f"{uprefix}db_id", "").strip()
+        sheet_key = _name_key(form.get(f"{uprefix}gs_name"))
         is_zdravotnik = form.get(f"{uprefix}is_zdravotnik") == "1"
         is_ridic = form.get(f"{uprefix}is_ridic") == "1"
 
@@ -127,6 +149,8 @@ def _process_import_users(
             # Existing user — update import-managed qualifications if they differ.
             existing = db.session.get(UserAccount, db_id)
             if existing:
+                if sheet_key:
+                    sheet_name_to_user[sheet_key] = existing
                 current_managed = {
                     q.name for q in existing.qualifications if q.name.lower() in _IMPORT_MANAGED_QUAL_NAMES
                 }
@@ -150,17 +174,31 @@ def _process_import_users(
         if not include:
             continue
 
-        name = form.get(f"{uprefix}name", "").strip()
         email = form.get(f"{uprefix}email", "").strip().lower()
         phone = form.get(f"{uprefix}phone", "").strip() or None
 
-        if not name or not email:
+        try:
+            surname, first_name = parse_name_parts(
+                form.get(f"{uprefix}surname"),
+                form.get(f"{uprefix}first_name"),
+                allow_placeholder_first_name=True,
+            )
+        except ValueError as exc:
+            label = (form.get(f"{uprefix}gs_name") or "").strip() or f"řádek {i + 1}"
+            rejected_users.append(f"„{label}“ ({exc})")
+            continue
+        name = display_name(surname, first_name)
+
+        if not email:
             continue
 
-        if name.lower() in existing_by_name or email.lower() in existing_by_email:
+        duplicate = existing_by_name.get(_name_key(name)) or existing_by_email.get(email.lower())
+        if duplicate:
+            if sheet_key:
+                sheet_name_to_user[sheet_key] = duplicate
             continue
 
-        new_user = UserAccount(name=name, email=email, phone=phone, is_active=True)
+        new_user = UserAccount(surname=surname, first_name=first_name, email=email, phone=phone, is_active=True)
         import_as_archived = form.get(f"{uprefix}archived") == "1"
         if import_as_archived:
             new_user.is_archived = True
@@ -173,14 +211,15 @@ def _process_import_users(
         db.session.add(new_user)
         db.session.flush()
 
-        existing_by_name[name.lower()] = new_user
-        if email:
-            existing_by_email[email.lower()] = new_user
+        existing_by_name[_name_key(name)] = new_user
+        existing_by_email[email.lower()] = new_user
+        if sheet_key:
+            sheet_name_to_user[sheet_key] = new_user
 
         audit("import", "UserAccount", new_user.id, f"Uživatel importován z Google Sheets: {name}", None)
         created += 1
 
-    return created, updated_quals
+    return created, updated_quals, sheet_name_to_user
 
 
 def _create_spots_and_assignments(
@@ -194,6 +233,7 @@ def _create_spots_and_assignments(
     global_zdravotnik_qual_id: int | None,
     global_zelenac_qual_id: int | None,
     _qual: Any,
+    unresolved_names: list[str],
 ) -> int:
     """Create spots, assignments, and debriefings for a single imported event.
 
@@ -208,14 +248,33 @@ def _create_spots_and_assignments(
     signup_names = [form.get(f"{prefix}signup_{j}", "").strip() for j in range(signup_count)]
     signup_names = [n for n in signup_names if n]
 
-    total_people = len(signup_names) + (1 if responsible_person_id else 0)
+    rp_user_obj = db.session.get(UserAccount, responsible_person_id) if responsible_person_id else None
+
+    # Resolve signups before sizing: different sheet names can resolve to one account (email match,
+    # surname-only alias, RP listed again), and a duplicate must neither add a spot nor take the spot
+    # of a later signup (a second assignment would also violate uq_assignment_event_user).
+    assigned_user_ids: set[uuid.UUID] = {rp_user_obj.id} if rp_user_obj else set()
+    signup_users: list[UserAccount] = []
+    unresolved_keys: set[str] = set()
+    for signup_name in signup_names:
+        signup_user = name_to_user.get(_name_key(signup_name))
+        if signup_user is None:
+            unresolved_names.append(signup_name)
+            unresolved_keys.add(_name_key(signup_name))
+        elif signup_user.id not in assigned_user_ids:
+            assigned_user_ids.add(signup_user.id)
+            signup_users.append(signup_user)
+    signup_people = len(signup_users) + len(unresolved_keys)
+
+    total_people = signup_people + (1 if responsible_person_id else 0)
 
     zdravotnik_qual_id = _get_int(f"{prefix}zdravotnik_qual_id") or global_zdravotnik_qual_id
     zelenac_qual_id = _get_int(f"{prefix}zelenac_qual_id") or global_zelenac_qual_id
     zdravotnik_qual = _qual(zdravotnik_qual_id)
     zelenac_qual = _qual(zelenac_qual_id)
 
-    if total_people <= 3:
+    # The small layout has two Zelenáč spots; more distinct signups need one spot each.
+    if total_people <= 3 and signup_people <= 2:
         spots_def: list[tuple[str, bool, Qualification | None]] = [
             ("Zdravotník", False, zdravotnik_qual),
             ("Zelenáč", False, zelenac_qual),
@@ -223,7 +282,7 @@ def _create_spots_and_assignments(
         ]
     else:
         spots_def = [("Zdravotník", False, zdravotnik_qual)]
-        for _ in signup_names:
+        for _ in range(signup_people):
             spots_def.append(("Zelenáč", False, zelenac_qual))
 
     zdravotnik_spot: EventSpot | None = None
@@ -248,8 +307,7 @@ def _create_spots_and_assignments(
     auto_debriefings = 0
 
     # RP → Zdravotník spot
-    if responsible_person_id and zdravotnik_spot:
-        rp_user_obj = db.session.get(UserAccount, responsible_person_id)
+    if zdravotnik_spot:
         if rp_user_obj:
             rp_assignment = Assignment(
                 spot_id=zdravotnik_spot.id,
@@ -271,29 +329,25 @@ def _create_spots_and_assignments(
                 )
                 auto_debriefings += 1
 
-    # Each signup → Zelenáč spots in order
-    for j, signup_name in enumerate(signup_names):
-        if j >= len(zelenac_spots):
-            break
-        signup_user = name_to_user.get(signup_name.lower())
-        if signup_user:
-            signup_assignment = Assignment(
-                spot_id=zelenac_spots[j].id,
-                user_id=signup_user.id,
-                assigned_by_id=current_user.id,
-            )
-            db.session.add(signup_assignment)
-            if is_past:
-                db.session.flush()
-                db.session.add(
-                    DebriefingRecord(
-                        assignment_id=signup_assignment.id,
-                        submitted_by_id=current_user.id,
-                        event_note_status=0,
-                        feedback_event=_IMPORT_DEBRIEFING_NOTE,
-                    )
+    # Each distinct resolved signup → Zelenáč spots in order
+    for spot, signup_user in zip(zelenac_spots, signup_users):
+        signup_assignment = Assignment(
+            spot_id=spot.id,
+            user_id=signup_user.id,
+            assigned_by_id=current_user.id,
+        )
+        db.session.add(signup_assignment)
+        if is_past:
+            db.session.flush()
+            db.session.add(
+                DebriefingRecord(
+                    assignment_id=signup_assignment.id,
+                    submitted_by_id=current_user.id,
+                    event_note_status=0,
+                    feedback_event=_IMPORT_DEBRIEFING_NOTE,
                 )
-                auto_debriefings += 1
+            )
+            auto_debriefings += 1
 
     return auto_debriefings
 
@@ -324,7 +378,7 @@ def _parse_json_payload(raw: str) -> tuple[list[Any], list[Any], str | None]:
 
 def _build_users_preview(payload_users: list[Any], all_users: list[UserAccount]) -> list[dict[str, Any]]:
     """Build preview rows for the users section of the import."""
-    db_by_name: dict[str, UserAccount] = {u.name.lower(): u for u in all_users}
+    db_by_name = _name_lookup(all_users)
     db_by_email: dict[str, UserAccount] = {u.email.lower(): u for u in all_users if u.email}
     rows: list[dict[str, Any]] = []
 
@@ -340,8 +394,8 @@ def _build_users_preview(payload_users: list[Any], all_users: list[UserAccount])
 
         existing_user: UserAccount | None = None
         match_reason = "none"
-        if name.lower() in db_by_name:
-            existing_user = db_by_name[name.lower()]
+        if _name_key(name) in db_by_name:
+            existing_user = db_by_name[_name_key(name)]
             match_reason = "name"
         elif email and email.lower() in db_by_email:
             existing_user = db_by_email[email.lower()]
@@ -367,10 +421,14 @@ def _build_users_preview(payload_users: list[Any], all_users: list[UserAccount])
             if to_add or to_remove:
                 qual_changes = {"add": to_add, "remove": to_remove}
 
+        surname, first_name = split_full_name(name) if name else ("", "")
         rows.append(
             {
                 "gs_name": gs_name,
+                "key": _name_key(gs_name or name),
                 "name": name,
+                "surname": surname,
+                "first_name": first_name,
                 "email": email,
                 "phone": phone,
                 "is_zdravotnik": is_zdravotnik,
@@ -522,7 +580,7 @@ def events_preview() -> str | Response:
         return error_html
 
     # ── Load DB lookups ─────────────────────────────────────────────────────
-    all_users = list(db.session.scalars(db.select(UserAccount).order_by(collate(UserAccount.name, CS_COLLATION))).all())
+    all_users = list(db.session.scalars(db.select(UserAccount).order_by(*user_name_order())).all())
     active_users = [u for u in all_users if u.is_active]
     master_events = list(
         db.session.scalars(db.select(MasterEvent).order_by(collate(MasterEvent.name, CS_COLLATION))).all()
@@ -570,6 +628,7 @@ def events_preview() -> str | Response:
             {
                 **cleaned,
                 "rp_user": rp_user,
+                "rp_key": _name_key(cleaned["responsible_person"]),
                 "rp_confidence": rp_confidence,
                 "warnings": warnings,
                 "is_duplicate": is_duplicate,
@@ -664,11 +723,13 @@ def events_confirm() -> Response:
     user_count = int(user_count_str) if user_count_str.isdigit() else 0
 
     try:
-        created_users, qual_updates = _process_import_users(form, user_count)
+        rejected_users: list[str] = []
+        created_users, qual_updates, sheet_name_to_user = _process_import_users(form, user_count, rejected_users)
 
-        # Build comprehensive name→user map (all DB users incl. newly created).
+        # Name→user map (all DB users incl. newly created); sheet names resolve to their own preview row's user first.
         all_users_now = list(db.session.scalars(db.select(UserAccount)).all())
-        name_to_user: dict[str, UserAccount] = {u.name.lower(): u for u in all_users_now}
+        name_to_user = {**_name_lookup(all_users_now), **sheet_name_to_user}
+        unresolved_names: list[str] = []
 
         created = 0
         skipped = 0
@@ -704,8 +765,10 @@ def events_confirm() -> Response:
             rp_id_str = form.get(f"{prefix}responsible_person_id", "").strip()
             if rp_id_str.startswith("name:"):
                 rp_name_lookup = rp_id_str[5:].strip()
-                rp_from_name = name_to_user.get(rp_name_lookup.lower())
+                rp_from_name = name_to_user.get(_name_key(rp_name_lookup))
                 responsible_person_id: str | None = str(rp_from_name.id) if rp_from_name else None
+                if not rp_from_name and rp_name_lookup:
+                    unresolved_names.append(rp_name_lookup)
             else:
                 responsible_person_id = rp_id_str or None
 
@@ -756,6 +819,7 @@ def events_confirm() -> Response:
                     global_zdravotnik_qual_id,
                     global_zelenac_qual_id,
                     _qual,
+                    unresolved_names,
                 )
 
             if not time_missing and not cancelled and not is_past:
@@ -789,4 +853,9 @@ def events_confirm() -> Response:
     if auto_debriefings:
         parts.append(f"automaticky vytvořeno {auto_debriefings} debriefingů pro historické akce")
     flash(f"Import dokončen: {', '.join(parts)}.", "success")
+    if rejected_users:
+        flash(f"Tito uživatelé nebyli importováni: {'; '.join(rejected_users)}", "warning")
+    if unresolved_names:
+        listed = ", ".join(f"„{n}“" for n in dict.fromkeys(unresolved_names))
+        flash(f"Nepodařilo se přiřadit k existujícímu uživateli: {listed}.", "warning")
     return redirect(url_for("events.index"))

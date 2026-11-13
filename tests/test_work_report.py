@@ -58,7 +58,7 @@ def _make_paid_event(
     admin = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "admin@test.com"))
     if admin is None:
         role = db.session.scalar(db.select(Role).where(Role.name == Role.ADMIN))
-        admin = UserAccount(email="admin@test.com", name="Admin", is_active=True)
+        admin = UserAccount(email="admin@test.com", surname="Admin", first_name="Testovací", is_active=True)
         admin.set_password("adminpass")
         admin.roles = [role]
         db.session.add(admin)
