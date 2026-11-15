@@ -1,14 +1,13 @@
 """Tests for app.db_timeout — per-statement query timeout on SQL Server."""
 
-import importlib.util
-import json
 import os
-import re
+import shutil
+import socket
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from flask import Flask
@@ -17,43 +16,16 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 
-from app import create_app
-from app.config import TestingConfig
+from app import create_app, db_timeout
 from app.db_timeout import attach_query_timeout
 from app.extensions import db
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+GUNICORN_SOFTWARE = "gunicorn/99.0"
 
 
-def _load_config_module(monkeypatch: pytest.MonkeyPatch, raw: str | None) -> ModuleType:
-    """Import a fresh copy of app/config.py with DB_QUERY_TIMEOUT_SECONDS set to ``raw``."""
-    if raw is None:
-        monkeypatch.delenv("DB_QUERY_TIMEOUT_SECONDS", raising=False)
-    else:
-        monkeypatch.setenv("DB_QUERY_TIMEOUT_SECONDS", raw)
-    spec = importlib.util.spec_from_file_location("_config_probe", REPO_ROOT / "app" / "config.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@pytest.mark.parametrize(("raw", "expected"), [(None, 0), ("0", 0), ("30", 30)])
-def test_config_reads_timeout_from_env(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: int) -> None:
-    config = _load_config_module(monkeypatch, raw)
-    for name in ("development", "testing", "production"):
-        assert config.config_by_name[name].DB_QUERY_TIMEOUT_SECONDS == expected
-
-
-def test_config_rejects_invalid_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(ValueError):
-        _load_config_module(monkeypatch, "abc")
-
-
-def _make_app(db_url: str, seconds: int) -> tuple[Flask, SQLAlchemy]:
+def _make_app(db_url: str) -> tuple[Flask, SQLAlchemy]:
     flask_app = Flask(__name__)
     flask_app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-    flask_app.config["DB_QUERY_TIMEOUT_SECONDS"] = seconds
     sa = SQLAlchemy()
     sa.init_app(flask_app)
     attach_query_timeout(flask_app, sa)
@@ -61,9 +33,11 @@ def _make_app(db_url: str, seconds: int) -> tuple[Flask, SQLAlchemy]:
 
 
 @pytest.fixture
-def timeout_app(app: Flask, request: pytest.FixtureRequest) -> Iterator[tuple[Flask, SQLAlchemy]]:
-    """A separate app on the test database with the timeout given by ``request.param``."""
-    flask_app, sa = _make_app(app.config["SQLALCHEMY_DATABASE_URI"], request.param)
+def timeout_app(app: Flask, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Flask, SQLAlchemy]]:
+    """A separate app on the test database, built as if running under gunicorn with a 1 s timeout."""
+    monkeypatch.setenv("SERVER_SOFTWARE", GUNICORN_SOFTWARE)
+    monkeypatch.setattr(db_timeout, "QUERY_TIMEOUT_SECONDS", 1)
+    flask_app, sa = _make_app(app.config["SQLALCHEMY_DATABASE_URI"])
     with flask_app.app_context():
         try:
             yield flask_app, sa
@@ -78,7 +52,6 @@ def _dbapi_timeout(sa: SQLAlchemy) -> int:
     return int(dbapi_connection.timeout)
 
 
-@pytest.mark.parametrize("timeout_app", [1], indirect=True)
 def test_slow_statement_is_cancelled_and_session_recovers(timeout_app: tuple[Flask, SQLAlchemy]) -> None:
     _, sa = timeout_app
     # The engine's very first connection (which also runs the dialect's
@@ -99,17 +72,30 @@ def test_slow_statement_is_cancelled_and_session_recovers(timeout_app: tuple[Fla
     assert _dbapi_timeout(sa) == 1
 
 
-@pytest.mark.parametrize("timeout_app", [0, -1], indirect=True)
-def test_zero_or_negative_timeout_is_disabled(timeout_app: tuple[Flask, SQLAlchemy]) -> None:
-    _, sa = timeout_app
-    assert "_set_query_timeout" not in _connect_listener_names(sa.engine)
-    assert _dbapi_timeout(sa) == 0
-    sa.session.execute(text("WAITFOR DELAY '00:00:01'"))
+@pytest.mark.parametrize("server_software", [None, "Werkzeug/3.1", "notgunicorn/1.0"])
+def test_timeout_not_installed_outside_gunicorn(
+    app: Flask, monkeypatch: pytest.MonkeyPatch, server_software: str | None
+) -> None:
+    if server_software is None:
+        monkeypatch.delenv("SERVER_SOFTWARE", raising=False)
+    else:
+        monkeypatch.setenv("SERVER_SOFTWARE", server_software)
+    monkeypatch.setattr(db_timeout, "QUERY_TIMEOUT_SECONDS", 1)
+    flask_app, sa = _make_app(app.config["SQLALCHEMY_DATABASE_URI"])
+    with flask_app.app_context():
+        try:
+            assert "_set_query_timeout" not in _connect_listener_names(sa.engine)
+            assert _dbapi_timeout(sa) == 0
+            sa.session.execute(text("WAITFOR DELAY '00:00:02'"))
+        finally:
+            sa.session.remove()
+            sa.engine.dispose()
 
 
-def test_timeout_listener_runs_before_dialect_initialization() -> None:
+def test_timeout_listener_runs_before_dialect_initialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SERVER_SOFTWARE", GUNICORN_SOFTWARE)
     url = "mssql+pyodbc://u:p@localhost/db?driver=ODBC+Driver+18+for+SQL+Server"
-    flask_app, sa = _make_app(url, 5)
+    flask_app, sa = _make_app(url)
     with flask_app.app_context():
         listeners = _connect_listener_names(sa.engine)
     assert listeners[0] == "_set_query_timeout"
@@ -120,11 +106,14 @@ def _connect_listener_names(engine: Engine) -> list[str]:
     return [getattr(fn, "__name__", "") for fn in engine.pool.dispatch.connect]
 
 
-@pytest.mark.parametrize(("seconds", "installed"), [(0, False), (5, True)])
-def test_create_app_attaches_timeout_from_config(
-    app: Flask, monkeypatch: pytest.MonkeyPatch, seconds: int, installed: bool
+@pytest.mark.parametrize(("server_software", "installed"), [(None, False), (GUNICORN_SOFTWARE, True)])
+def test_create_app_attaches_timeout_only_under_gunicorn(
+    app: Flask, monkeypatch: pytest.MonkeyPatch, server_software: str | None, installed: bool
 ) -> None:
-    monkeypatch.setattr(TestingConfig, "DB_QUERY_TIMEOUT_SECONDS", seconds)
+    if server_software is None:
+        monkeypatch.delenv("SERVER_SOFTWARE", raising=False)
+    else:
+        monkeypatch.setenv("SERVER_SOFTWARE", server_software)
     flask_app = create_app("testing", db_url=app.config["SQLALCHEMY_DATABASE_URI"])
     with flask_app.app_context():
         names = _connect_listener_names(db.engine)
@@ -133,27 +122,51 @@ def test_create_app_attaches_timeout_from_config(
     assert names.count("_set_query_timeout") == (1 if installed else 0)
 
 
-def _dockerfile_cmd() -> list[str]:
-    match = re.search(r"^CMD (\[.*\])$", (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8"), re.MULTILINE)
-    assert match is not None
-    cmd: list[str] = json.loads(match.group(1))
-    return cmd
+PROBE_APP = """\
+import os
+
+with open(os.environ["PROBE_OUT"], "w", encoding="utf-8") as fh:
+    fh.write(os.environ.get("SERVER_SOFTWARE", ""))
 
 
-def test_timeout_applies_to_gunicorn_but_not_entrypoint_migrations(tmp_path: Path) -> None:
-    """Run the real entrypoint and Dockerfile CMD with stub ``flask`` and ``gunicorn``."""
-    seen = tmp_path / "seen"
-    for name in ("flask", "gunicorn"):
-        stub = tmp_path / name
-        stub.write_text(f'#!/bin/sh\necho "{name} $1 timeout=${{DB_QUERY_TIMEOUT_SECONDS:-unset}}" >> "{seen}"\n')
-        stub.chmod(0o755)
-    env = {k: v for k, v in os.environ.items() if k != "DB_QUERY_TIMEOUT_SECONDS"}
-    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+def application(environ, start_response):
+    start_response("200 OK", [("Content-Type", "text/plain")])
+    return [b"ok"]
+"""
 
-    subprocess.run(["sh", str(REPO_ROOT / "docker-entrypoint.sh"), *_dockerfile_cmd()], env=env, check=True)
 
-    assert seen.read_text(encoding="utf-8").splitlines() == [
-        "flask db timeout=unset",
-        "flask verify-schema timeout=unset",
-        "gunicorn -w timeout=30",
-    ]
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+        return port
+
+
+@pytest.mark.parametrize("preload", [False, True])
+def test_gunicorn_sets_server_software_before_app_load(tmp_path: Path, preload: bool) -> None:
+    """Guards against a gunicorn upgrade that stops exporting SERVER_SOFTWARE before app load."""
+    gunicorn = shutil.which("gunicorn", path=str(Path(sys.executable).parent))
+    assert gunicorn is not None
+    (tmp_path / "probe_app.py").write_text(PROBE_APP, encoding="utf-8")
+    out = tmp_path / "server_software"
+    env = {k: v for k, v in os.environ.items() if k != "SERVER_SOFTWARE"}
+    env["PROBE_OUT"] = str(out)
+    cmd = [gunicorn, "-k", "gthread", "-w", "1", "-b", f"127.0.0.1:{_free_port()}", "--chdir", str(tmp_path)]
+    if preload:
+        cmd.append("--preload")
+    cmd.append("probe_app:application")
+
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 20
+        while not out.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert out.exists(), "gunicorn did not load the probe app"
+        assert out.read_text(encoding="utf-8").startswith("gunicorn/")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
