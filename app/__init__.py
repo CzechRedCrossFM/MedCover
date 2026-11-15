@@ -173,7 +173,15 @@ def create_app(
         # process start time in dev (changes on every container/server restart).
         _git = app.config.get("GIT_COMMIT", "dev")
         static_ver: str = _git if (_git and _git != "dev") else _STARTUP_TS
-        return {"config": app.config, "feedback_enabled": feedback_enabled, "static_ver": static_ver}
+        # DEV-stamped logos/icons for builds without a git commit (same signal as the
+        # admin build-info footer) so DEV and prod are told apart at a glance.
+        img_dir = "img/dev/" if _git == "dev" else "img/"
+        return {
+            "config": app.config,
+            "feedback_enabled": feedback_enabled,
+            "static_ver": static_ver,
+            "img_dir": img_dir,
+        }
 
     @app.template_filter("localdt")
     def localdt_filter(dt: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:

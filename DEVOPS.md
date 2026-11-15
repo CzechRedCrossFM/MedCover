@@ -857,7 +857,7 @@ Both are available in `app.config` and in Jinja2 templates as `config.APP_VERSIO
 | Key | Value | Purpose |
 |---|---|---|
 | `APP_VERSION` | `0.9.0` (from `VERSION` file) | Human-readable semantic version; shown in admin dashboard; stored in `UserFeedback.app_version` |
-| `GIT_COMMIT` | `abc1234` (from Docker build arg) | Exact commit; used for static file cache-busting in `app/__init__.py`; shown in admin dashboard as a GitHub link |
+| `GIT_COMMIT` | `abc1234` (from Docker build arg) | Exact commit; used for static file cache-busting in `app/__init__.py`; shown in admin dashboard as a GitHub link; the value `dev` also makes the app use the DEV-stamped logos/icons from `app/static/img/dev/` |
 
 `GIT_COMMIT` defaults to `"dev"` outside Docker (local dev, tests).
 
