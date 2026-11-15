@@ -2,6 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from app.constants import RECORD_MODIFIED_MSG
 from app.extensions import db
 from app.models.equipment import (
     EquipmentItem,
@@ -10,9 +13,10 @@ from app.models.equipment import (
 )
 from app.models.event import Event, EventStatus
 from app.models.master_event import MasterEvent
+from app.models.role import Role
 from app.models.user import UserAccount
 from app.queries import available_quantity_for_type
-from tests.conftest import _make_event_in_status
+from tests.conftest import _make_event_in_status, _make_user, _post_with_stale_commit
 
 
 def _make_type(app, name: str = "Test Type") -> int:
@@ -29,6 +33,29 @@ def _make_item(app, type_id: int, name: str = "Test Item") -> int:
         db.session.add(item)
         db.session.commit()
         return item.id
+
+
+def _version(app, item_id: int) -> int:
+    with app.app_context():
+        return db.session.get(EquipmentItem, item_id).version
+
+
+def _set_window(app, item_id: int, since: datetime, until: datetime | None = None, reason: str | None = None) -> None:
+    with app.app_context():
+        item = db.session.get(EquipmentItem, item_id)
+        item.unavailability_since = since
+        item.unavailability_until = until
+        item.unavailability_reason = reason
+        db.session.commit()
+
+
+def _plan_future_event(app, type_id: int, name: str, days: float = 5) -> int:
+    start = datetime.now(timezone.utc) + timedelta(days=days)
+    event_id = _make_event_in_status(app, name=name, start=start, end=start + timedelta(hours=8))
+    with app.app_context():
+        db.session.add(EventEquipmentPlan(event_id=event_id, equipment_type_id=type_id, quantity_required=1))
+        db.session.commit()
+    return event_id
 
 
 class TestEquipmentTypeList:
@@ -305,6 +332,39 @@ class TestEquipmentTypeEditExtended:
         body = response.data.decode()
         assert "None" not in body
 
+    def test_edit_icon_too_long_flashes(self, app, admin_client):
+        type_id = _make_type(app, "Icon Type")
+        with app.app_context():
+            et = db.session.get(EquipmentType, type_id)
+            et.icon = "🩺"
+            db.session.commit()
+            version = et.version
+        response = admin_client.post(
+            f"/equipment/types/{type_id}/edit",
+            data={"name": "Changed", "icon": "x" * 17, "version": str(version)},
+        )
+        assert response.status_code == 200
+        assert "Ikona typu vybavení je povinná a může mít nejvýše 16 znaků.".encode() in response.data
+        with app.app_context():
+            et = db.session.get(EquipmentType, type_id)
+            assert (et.name, et.icon, et.version) == ("Icon Type", "🩺", version)
+
+    def test_edit_stale_commit(self, app, admin_client):
+        type_id = _make_type(app, "Stale Type")
+        with app.app_context():
+            version = db.session.get(EquipmentType, type_id).version
+        response = _post_with_stale_commit(
+            admin_client,
+            f"/equipment/types/{type_id}/edit",
+            data={"name": "Changed", "icon": "🎒", "version": str(version)},
+        )
+        assert response.status_code == 302
+        assert response.headers["Location"] == "/equipment/"
+        assert RECORD_MODIFIED_MSG.encode() in admin_client.get(response.headers["Location"]).data
+        with app.app_context():
+            et = db.session.get(EquipmentType, type_id)
+            assert (et.name, et.version) == ("Stale Type", version)
+
 
 # ── Type delete: extended ─────────────────────────────────────────────────────
 
@@ -462,6 +522,65 @@ class TestEquipmentItemEdit:
         body = response.data.decode()
         assert "None" not in body
 
+    def test_missing_type_flashes(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Keep Name")
+        version = _version(app, item_id)
+        response = admin_client.post(
+            f"/equipment/items/{item_id}/edit",
+            data={"name": "Changed", "type_id": "", "version": str(version)},
+        )
+        assert response.status_code == 200
+        assert "Typ vybavení je povinný.".encode() in response.data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.name, item.type_id, item.version) == ("Keep Name", type_id, version)
+
+    @pytest.mark.parametrize(
+        ("window", "message"),
+        [
+            ({"unavailability_since": "zz"}, "Neplatný formát data servisního okna."),
+            (
+                {"unavailability_since": "2030-02-01T10:00", "unavailability_until": "zz"},
+                "Neplatný formát data servisního okna.",
+            ),
+            (
+                {"unavailability_since": "2030-02-02T10:00", "unavailability_until": "2030-02-01T10:00"},
+                "Konec servisního okna musí být po jeho začátku.",
+            ),
+        ],
+    )
+    def test_invalid_window_flashes(self, app, admin_client, window, message):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Keep Name")
+        version = _version(app, item_id)
+        response = admin_client.post(
+            f"/equipment/items/{item_id}/edit",
+            data={"name": "Changed", "type_id": str(type_id), "version": str(version), **window},
+        )
+        assert response.status_code == 200
+        assert message.encode() in response.data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.name, item.unavailability_since, item.unavailability_until) == ("Keep Name", None, None)
+            assert item.version == version
+
+    def test_stale_commit(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Keep Name")
+        version = _version(app, item_id)
+        response = _post_with_stale_commit(
+            admin_client,
+            f"/equipment/items/{item_id}/edit",
+            data={"name": "Changed", "type_id": str(type_id), "version": str(version)},
+        )
+        assert response.status_code == 302
+        assert response.headers["Location"] == "/equipment/items/"
+        assert RECORD_MODIFIED_MSG.encode() in admin_client.get(response.headers["Location"]).data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.name, item.version) == ("Keep Name", version)
+
 
 # ── Item delete: extended ─────────────────────────────────────────────────────
 
@@ -526,6 +645,32 @@ class TestEquipmentItemDeleteExtended:
         with app.app_context():
             assert db.session.get(EquipmentItem, item_id) is not None
 
+    @pytest.mark.parametrize(
+        ("until_days", "deleted"),
+        [(None, True), (1, False), (10, True)],
+        ids=["indefinite_maintenance", "maintenance_ends_before_event", "event_inside_maintenance"],
+    )
+    def test_delete_under_maintenance(self, app, admin_client, until_days, deleted):
+        type_id = _make_type(app, "Maint Type")
+        item_id = _make_item(app, type_id, "Maint Item")
+        _plan_future_event(app, type_id, "Maint Event")
+        now = datetime.now(timezone.utc)
+        until = now + timedelta(days=until_days) if until_days else None
+        _set_window(app, item_id, now - timedelta(hours=1), until)
+
+        resp = admin_client.post(f"/equipment/items/{item_id}/delete", follow_redirects=True)
+        body = resp.data.decode()
+        with app.app_context():
+            exists = db.session.get(EquipmentItem, item_id) is not None
+        if deleted:
+            assert "Položka vybavení „Maint Item“ byla smazána." in body
+            assert "Nelze smazat" not in body
+            assert not exists
+        else:
+            assert "Nelze smazat" in body
+            assert "Maint Event" in body
+            assert exists
+
 
 # ── Item issue/return: extended ───────────────────────────────────────────────
 
@@ -549,6 +694,21 @@ class TestEquipmentItemIssueExtended:
         )
         assert response.status_code == 200
         assert "vydána" in response.data.decode() or "již" in response.data.decode()
+
+    def test_take_already_issued_flashes(self, app, member_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Taken Item")
+        with app.app_context():
+            holder = _make_user("holder@medcover.local", "Testovací Držitel", Role.MEMBER)
+            item = db.session.get(EquipmentItem, item_id)
+            item.issued_to_id = holder.id
+            item.issued_at = datetime.now(timezone.utc)
+            db.session.commit()
+            holder_id = holder.id
+        response = member_client.post(f"/equipment/items/{item_id}/take", follow_redirects=True)
+        assert "Položka je již vydána.".encode() in response.data
+        with app.app_context():
+            assert db.session.get(EquipmentItem, item_id).issued_to_id == holder_id
 
     def test_no_user_id_flashes(self, app, admin_client):
         type_id = _make_type(app)
@@ -953,32 +1113,6 @@ class TestUnavailabilityFutureEventWarning:
 
     # ── Diff-based warning tests ────────────────────────────────────
 
-    # Counter to generate unique event names across calls within the same test session.
-    _event_counter: int = 0
-
-    def _make_event_with_plan(
-        self,
-        app,
-        type_id: int,
-        start_offset_days: float,
-        duration_hours: float = 8,
-    ) -> int:
-        """Create a future event with a single equipment plan for type_id.
-        Returns the event_id. Uses a unique name per call to avoid the master-event
-        unique-name constraint when a single test creates multiple events."""
-        TestUnavailabilityFutureEventWarning._event_counter += 1
-        name = f"Warn Event {TestUnavailabilityFutureEventWarning._event_counter}"
-        future_start = datetime.now(timezone.utc) + timedelta(days=start_offset_days)
-        future_end = future_start + timedelta(hours=duration_hours)
-        event_id = _make_event_in_status(app, name=name)
-        with app.app_context():
-            db.session.add(EventEquipmentPlan(event_id=event_id, equipment_type_id=type_id, quantity_required=1))
-            ev = db.session.get(Event, event_id)
-            ev.start_datetime = future_start
-            ev.end_datetime = future_end
-            db.session.commit()
-        return event_id
-
     def test_extending_active_window_warns_only_for_newly_covered_events(self, app, admin_client):
         """Case 2: item already in maintenance; edit extends until to cover a new event.
         Warning fires only for the newly covered event, not the one already short."""
@@ -987,8 +1121,8 @@ class TestUnavailabilityFutureEventWarning:
 
         # E1 starts in 5 days — will be inside old AND new window
         # E2 starts in 15 days — will be outside old window (until=+10d) but inside new (until=+20d)
-        self._make_event_with_plan(app, type_id, start_offset_days=5)
-        event2_id = self._make_event_with_plan(app, type_id, start_offset_days=15)
+        _plan_future_event(app, type_id, "Warn Event 1", days=5)
+        event2_id = _plan_future_event(app, type_id, "Warn Event 2", days=15)
 
         # Seed old maintenance window: since = yesterday, until = +10 days
         with app.app_context():
@@ -1029,8 +1163,8 @@ class TestUnavailabilityFutureEventWarning:
         item_id = _make_item(app, type_id, "ShortenWin Item")
 
         # Two future events — both initially within the window
-        self._make_event_with_plan(app, type_id, start_offset_days=5)
-        event2_id = self._make_event_with_plan(app, type_id, start_offset_days=15)  # noqa: F841
+        _plan_future_event(app, type_id, "Warn Event 1", days=5)
+        _plan_future_event(app, type_id, "Warn Event 2", days=15)
 
         # Seed window covering both events: since=yesterday, until=+20d
         with app.app_context():
@@ -1065,7 +1199,7 @@ class TestUnavailabilityFutureEventWarning:
         No warning should fire."""
         type_id = _make_type(app, "ReasonOnly Type")
         item_id = _make_item(app, type_id, "ReasonOnly Item")
-        self._make_event_with_plan(app, type_id, start_offset_days=5)
+        _plan_future_event(app, type_id, "Warn Event 1")
 
         with app.app_context():
             version = db.session.get(EquipmentItem, item_id).version
@@ -1090,7 +1224,7 @@ class TestUnavailabilityFutureEventWarning:
         Warning should fire because the future event is newly short."""
         type_id = _make_type(app, "Reschedule Type")
         item_id = _make_item(app, type_id, "Reschedule Item")
-        event_id = self._make_event_with_plan(app, type_id, start_offset_days=5)  # noqa: F841
+        _plan_future_event(app, type_id, "Warn Event 1")
 
         # Seed an already-expired window (both dates in the past)
         with app.app_context():
