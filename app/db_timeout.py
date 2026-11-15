@@ -1,28 +1,32 @@
-"""Per-statement query timeout for SQL Server connections.
+"""Per-statement query timeout for SQL Server connections of the gunicorn web process.
 
 gunicorn's ``gthread`` worker keeps heartbeating while a request thread is stuck in
-a hung query, so ``--timeout`` no longer frees it. The Dockerfile ``CMD`` sets
-``DB_QUERY_TIMEOUT_SECONDS`` for the gunicorn process only; migrations in the
-entrypoint and the scheduler run without a timeout. Setting the variable in the
-container environment does not change the web timeout; it would apply to the
-entrypoint migrations (and a compose-run scheduler) instead.
+a hung query, so ``--timeout`` no longer frees it. The timeout is therefore set on
+the database connection itself.
+
+It is installed only when ``SERVER_SOFTWARE`` starts with ``gunicorn/``: the gunicorn
+master sets that variable in its own environment before loading the application (with
+or without ``--preload``), so the workers inherit it. Migrations, the scheduler, the
+``flask`` CLI and ``flask run`` do not have it and run without a timeout.
 """
 
+import os
 from typing import Any
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 
+QUERY_TIMEOUT_SECONDS = 30
+
 
 def attach_query_timeout(app: Flask, db: SQLAlchemy) -> None:
-    """Set pyodbc's ``Connection.timeout`` on every new connection; 0 disables it.
+    """Set pyodbc's ``Connection.timeout`` on every new connection under gunicorn.
 
     A statement that runs longer fails with ``HYT00`` (``OperationalError``).
     Must be called after ``db.init_app(app)`` and before the first DB access.
     """
-    seconds = app.config["DB_QUERY_TIMEOUT_SECONDS"]
-    if seconds <= 0:
+    if not os.environ.get("SERVER_SOFTWARE", "").startswith("gunicorn/"):
         return
     with app.app_context():
         engine = db.engine
@@ -31,4 +35,4 @@ def attach_query_timeout(app: Flask, db: SQLAlchemy) -> None:
     # which SQLAlchemy registers when the engine is created.
     @event.listens_for(engine, "connect", insert=True)
     def _set_query_timeout(dbapi_connection: Any, _connection_record: Any) -> None:
-        dbapi_connection.timeout = seconds
+        dbapi_connection.timeout = QUERY_TIMEOUT_SECONDS
