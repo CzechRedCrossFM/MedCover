@@ -13,6 +13,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app import create_app
 from app.backup import _container
@@ -27,7 +28,7 @@ from app.models.settings import AppSettings
 from app.models.user import UserAccount
 
 if TYPE_CHECKING:
-    pass
+    from werkzeug.test import TestResponse
 
 # SQLAlchemy owns connection pooling. With ODBC driver-manager pooling on,
 # engine.dispose() leaves physical sessions open; ALTER DATABASE ... WITH
@@ -651,3 +652,20 @@ def _login(client, email: str, password: str = "testpass123") -> None:
         follow_redirects=True,
     )
     assert resp.request.path != "/auth/login", f"login as {email} failed (HTTP {resp.status_code})"
+
+
+def _post_with_stale_commit(
+    client, url: str, data: dict | None = None, headers: dict[str, str] | None = None
+) -> TestResponse:
+    """POST while db.session.commit raises StaleDataError, as a concurrent version bump would.
+
+    The patch hits every commit in the request, so callers must assert the route-specific redirect
+    and flash to be sure the failure came from the commit under test.
+    """
+
+    def _raise() -> None:
+        raise StaleDataError("simulated concurrent modification")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_db.session, "commit", _raise)
+        return client.post(url, data=data or {}, headers=headers or {})
