@@ -1,6 +1,7 @@
 """Event CRUD routes: index, feed, create, create_from_template, detail, edit, delete."""
 
 import io
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -51,6 +52,7 @@ from app.utils import (
     order_by_nulls_last,
     page_arg,
     require_permission,
+    to_local,
 )
 
 from . import events_bp
@@ -169,6 +171,23 @@ def _apply_index_order(
         return query.order_by(*order_by_nulls_last(rp_name_sq, descending=not _asc))
     # start (default)
     return query.order_by(Event.start_datetime.asc() if _asc else Event.start_datetime.desc())
+
+
+# Sort columns that visually group rows; other sorts have no entry and get no separators.
+_INDEX_GROUP_KEYS: dict[str, Callable[[Event], object]] = {
+    "start": lambda e: to_local(e.start_datetime).isocalendar()[:2],
+    "status": lambda e: e.status,
+    "rp": lambda e: e.responsible_person_id,
+}
+
+
+def _group_end_ids(events: Sequence[Event], sort_col: str) -> set[int]:
+    """Ids of rows followed by a row with a different group key (never the last row)."""
+    key = _INDEX_GROUP_KEYS.get(sort_col)
+    if key is None:
+        return set()
+    keys = [key(e) for e in events]
+    return {e.id for e, k, nxt in zip(events, keys, keys[1:]) if k != nxt}
 
 
 def _build_eligible_spot_map(events: list[Event]) -> dict[int, list[tuple[int, str | None, list[str], bool]]]:
@@ -342,6 +361,7 @@ def index() -> str | Response:
         all_event_types=_ALL_EVENT_TYPES,
         sort_col=f["sort_col"],
         sort_dir=f["sort_dir"],
+        group_end_ids=_group_end_ids(events, f["sort_col"]),
         active_me=f["active_me"],
         EventStatus=EventStatus,
         EventType=EventType,

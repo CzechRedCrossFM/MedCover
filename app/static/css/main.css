@@ -185,6 +185,22 @@
   color: var(--bs-secondary-color) !important;
 }
 
+/* Tinted event-type rows keep their background but use the normal table /
+   list border colour; Bootstrap's contextual classes would colour it. */
+tr.table-info,
+tr.table-warning {
+  border-color: var(--bs-border-color);
+}
+.list-group-item.list-group-item-info,
+.list-group-item.list-group-item-warning {
+  --bs-list-group-border-color: var(--bs-border-color);
+}
+
+/* /events: line under the last row of a sort group (week / status / ZO). */
+#events-table > tbody > tr.events-group-end > td {
+  border-bottom: 2px solid var(--color-events-group-separator);
+}
+
 /* Dark mode: FullCalendar — wire FullCalendar CSS variables to Bootstrap */
 [data-bs-theme="dark"] .fc {
   --fc-page-bg-color: var(--bs-body-bg);
@@ -449,6 +465,7 @@
   --color-column-flash: #ffc107;
   --color-tm-day-separator: #495057;
   --color-tm-event-separator: #adb5bd;
+  --color-events-group-separator: color-mix(in srgb, var(--bs-border-color) 60%, #a6c3ca);
   --color-tm-popup-background: #fff;
   --color-tm-popup-border: #dee2e6;
   --color-tm-popup-box-shadow: rgba(0,0,0,.15);
