@@ -18,6 +18,7 @@ from app.models.event import Event, EventSpot, EventStatus, EventTemplate
 from app.models.master_event import MasterEvent
 from app.models.role import Role
 from app.models.user import UserAccount
+from tests.conftest import _post_with_stale_commit
 
 
 def _second_session(app):
@@ -338,21 +339,12 @@ class TestStaleCommittedValueGuard:
 class TestStaleDataErrorHandler:
     """Writes not wrapped in commit_or_stale fall back to the app-wide handler."""
 
-    @staticmethod
-    def _post_with_stale_commit(client, url: str, headers: dict[str, str]):
-        def _raise() -> None:
-            raise StaleDataError("simulated concurrent modification")
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(db.session, "commit", _raise)
-            return client.post(url, headers=headers)
-
     def test_form_post_redirects_back_with_flash(self, app, admin_client) -> None:
         me_id = _make_master_event_id(app)
-        resp = self._post_with_stale_commit(
+        resp = _post_with_stale_commit(
             admin_client,
             f"/master-events/{me_id}/archive",
-            {"Referer": f"http://localhost/master-events/{me_id}?tab=x"},
+            headers={"Referer": f"http://localhost/master-events/{me_id}?tab=x"},
         )
         assert resp.status_code == 302
         assert resp.headers["Location"] == f"/master-events/{me_id}?tab=x"
@@ -363,15 +355,15 @@ class TestStaleDataErrorHandler:
 
     def test_foreign_referrer_falls_back_to_dashboard(self, app, admin_client) -> None:
         me_id = _make_master_event_id(app)
-        resp = self._post_with_stale_commit(
-            admin_client, f"/master-events/{me_id}/archive", {"Referer": "https://evil.example/phish"}
+        resp = _post_with_stale_commit(
+            admin_client, f"/master-events/{me_id}/archive", headers={"Referer": "https://evil.example/phish"}
         )
         assert resp.status_code == 302
         assert "evil.example" not in resp.headers["Location"]
 
     def test_xhr_gets_json_409(self, app, admin_client) -> None:
         me_id = _make_master_event_id(app)
-        resp = self._post_with_stale_commit(admin_client, f"/master-events/{me_id}/archive", {"X-CSRFToken": "t"})
+        resp = _post_with_stale_commit(admin_client, f"/master-events/{me_id}/archive", headers={"X-CSRFToken": "t"})
         assert resp.status_code == 409
         assert resp.get_json() == {"ok": False, "error": "Záznam byl mezitím změněn, načtěte stránku znovu."}
 
