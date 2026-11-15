@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import event as sa_event
 
 from app.extensions import db
@@ -10,9 +11,9 @@ from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventSpot, EventStatus
 from app.models.master_event import MasterEvent
 from app.models.outbox import OutboxEmail
-from app.models.role import Role
+from app.models.role import ROLE_PERMISSIONS, Role
 from app.models.user import UserAccount
-from tests.conftest import _make_user
+from tests.conftest import _make_event_in_status, _make_user
 
 
 def _make_me(name: str = "Test ME", **kwargs) -> MasterEvent:
@@ -434,38 +435,6 @@ class TestTableManager:
         with app.app_context():
             assert db.session.get(Assignment, assignment_id) is None
 
-    def test_event_time_update(self, app, admin_client):
-        me_id, event_id, _ = _setup_table_manager(app)
-        response = admin_client.post(
-            f"/master-events/{me_id}/table/event/{event_id}/update",
-            data={"field": "start_datetime", "value": "2030-07-01T09:00"},
-        )
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["ok"] is True
-        assert data["display"] == "09:00"
-        assert data["display_date"] == "01.07. po"
-        assert data["hours"] == "9,0"  # 07:00–16:00 UTC
-
-    def test_event_time_update_rejects_invalid_order(self, app, admin_client):
-        me_id, event_id, _ = _setup_table_manager(app)
-        # Event ends at 16:00 UTC = 18:00 CET; setting start to 19:00 CET should be rejected
-        response = admin_client.post(
-            f"/master-events/{me_id}/table/event/{event_id}/update",
-            data={"field": "start_datetime", "value": "2030-07-01T19:00"},
-        )
-        assert response.status_code == 400
-        data = response.get_json()
-        assert data["ok"] is False
-
-    def test_member_cannot_edit_event_time(self, app, member_client):
-        me_id, event_id, _ = _setup_table_manager(app)
-        response = member_client.post(
-            f"/master-events/{me_id}/table/event/{event_id}/update",
-            data={"field": "start_datetime", "value": "2030-07-01T09:00"},
-        )
-        assert response.status_code == 403
-
     def test_spot_count_increase(self, app, admin_client):
         me_id, event_id, spot_id = _setup_table_manager(app)
         response = admin_client.post(
@@ -669,6 +638,222 @@ class TestTableManager:
                 )
             ).all()
             assert rows, "assignments_opened outbox rows were not persisted after commit"
+
+
+class TestTableEventUpdate:
+    """Inline edits of a single event row in the table manager."""
+
+    @staticmethod
+    def _post(client, me_id, event_id, field, value):
+        return client.post(
+            f"/master-events/{me_id}/table/event/{event_id}/update",
+            data={"field": field, "value": value},
+        )
+
+    @staticmethod
+    def _state(app, event_id):
+        """Snapshot of the editable fields plus version (datetimes are UTC-aware)."""
+        with app.app_context():
+            ev = db.session.get(Event, event_id)
+            return (
+                ev.name,
+                ev.start_datetime,
+                ev.end_datetime,
+                ev.color,
+                ev.version,
+            )
+
+    @staticmethod
+    def _audit_entries(app, event_id):
+        with app.app_context():
+            return db.session.scalars(
+                db.select(AuditLogEntry)
+                .where(AuditLogEntry.entity_type == "Event", AuditLogEntry.entity_id == str(event_id))
+                .where(AuditLogEntry.action_type == "edit")
+            ).all()
+
+    def test_event_of_other_me_404(self, app, admin_client):
+        _, event_id, _ = _setup_table_manager(app)
+        with app.app_context():
+            other_me_id = _make_me("Jiná ME").id
+        before = self._state(app, event_id)
+        response = self._post(admin_client, other_me_id, event_id, "name", "Nový název")
+        assert response.status_code == 404
+        assert response.get_json() == {"ok": False, "error": "Akce nenalezena."}
+        assert self._state(app, event_id) == before
+
+    def test_missing_event_404(self, app, admin_client):
+        me_id, _, _ = _setup_table_manager(app)
+        event_id = _make_event_in_status(app, me_id=me_id)
+        with app.app_context():
+            db.session.delete(db.session.get(Event, event_id))
+            db.session.commit()
+        response = self._post(admin_client, me_id, event_id, "name", "Nový název")
+        assert response.status_code == 404
+        assert response.get_json() == {"ok": False, "error": "Akce nenalezena."}
+
+    def test_member_without_event_edit_403(self, app, member_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._state(app, event_id)
+        response = self._post(member_client, me_id, event_id, "name", "Nový název")
+        assert response.status_code == 403
+        assert self._state(app, event_id) == before
+
+    def test_rename(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "name", "Testovací akce přejmenovaná")
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True, "display": "Testovací akce přejmenovaná"}
+        name, _, _, _, version = self._state(app, event_id)
+        assert (name, version) == ("Testovací akce přejmenovaná", 2)
+        (entry,) = self._audit_entries(app, event_id)
+        assert entry.summary == "Přejmenována akce (tabulkový manažer)"
+        assert entry.changes_json["name"] == ["Akce TM", "Testovací akce přejmenovaná"]
+
+    def test_rename_too_long(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._state(app, event_id)
+        response = self._post(admin_client, me_id, event_id, "name", "x" * 201)
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "Název je příliš dlouhý (max 200 znaků)."
+        assert self._state(app, event_id) == before
+
+    def test_rename_max_length_accepted(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "name", "x" * 200)
+        assert response.status_code == 200
+        name, _, _, _, _ = self._state(app, event_id)
+        assert name == "x" * 200
+
+    @pytest.mark.parametrize("field", ["name", "shift_day", "start_datetime"])
+    def test_empty_value_rejected(self, app, admin_client, field):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._state(app, event_id)
+        response = self._post(admin_client, me_id, event_id, field, "  ")
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "Hodnota nesmí být prázdná."
+        assert self._state(app, event_id) == before
+
+    def test_color_valid_uppercased(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "color", "#ff0000")
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True, "color": "#FF0000"}
+        _, _, _, color, version = self._state(app, event_id)
+        assert (color, version) == ("#FF0000", 2)
+        (entry,) = self._audit_entries(app, event_id)
+        assert entry.summary.endswith(": #FF0000")
+
+    @pytest.mark.parametrize("bad_color", ["red", "#fff", "#12345", "#GGGGGG"])
+    def test_color_invalid_resets(self, app, admin_client, bad_color):
+        me_id, event_id, _ = _setup_table_manager(app)
+        with app.app_context():
+            db.session.get(Event, event_id).color = "#00FF00"
+            db.session.commit()
+        response = self._post(admin_client, me_id, event_id, "color", bad_color)
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True, "color": ""}
+        _, _, _, color, _ = self._state(app, event_id)
+        assert color is None
+        (entry,) = self._audit_entries(app, event_id)
+        assert entry.summary.endswith(": reset")
+
+    @pytest.mark.parametrize(
+        ("value", "start", "end", "label"),
+        [
+            (
+                "1",
+                datetime(2030, 7, 2, 8, 0, tzinfo=timezone.utc),
+                datetime(2030, 7, 2, 16, 0, tzinfo=timezone.utc),
+                "o +1 den",
+            ),
+            (
+                "-1",
+                datetime(2030, 6, 30, 8, 0, tzinfo=timezone.utc),
+                datetime(2030, 6, 30, 16, 0, tzinfo=timezone.utc),
+                "o -1 den",
+            ),
+        ],
+    )
+    def test_shift_day(self, app, admin_client, value, start, end, label):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "shift_day", value)
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True}
+        _, new_start, new_end, _, version = self._state(app, event_id)
+        assert (new_start, new_end, version) == (start, end, 2)
+        (entry,) = self._audit_entries(app, event_id)
+        assert label in entry.summary
+
+    @pytest.mark.parametrize(
+        ("value", "error"),
+        [
+            ("0", "Povolené hodnoty: -1 nebo 1."),
+            ("2", "Povolené hodnoty: -1 nebo 1."),
+            ("abc", "Neplatná hodnota posunu."),
+        ],
+    )
+    def test_shift_day_bad_values(self, app, admin_client, value, error):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._state(app, event_id)
+        response = self._post(admin_client, me_id, event_id, "shift_day", value)
+        assert response.status_code == 400
+        assert response.get_json()["error"] == error
+        assert self._state(app, event_id) == before
+
+    def test_end_datetime_valid(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "end_datetime", "2030-07-01T19:30")
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True, "display": "19:30", "display_date": "01.07. po", "hours": "9,5"}
+        _, start, end, _, version = self._state(app, event_id)
+        assert (start, end, version) == (
+            datetime(2030, 7, 1, 8, 0, tzinfo=timezone.utc),
+            datetime(2030, 7, 1, 17, 30, tzinfo=timezone.utc),
+            2,
+        )
+        (entry,) = self._audit_entries(app, event_id)
+        assert entry.summary == "Upraven čas akce 'Akce TM' (tabulkový manažer)"
+
+    def test_start_datetime_valid(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        response = self._post(admin_client, me_id, event_id, "start_datetime", "2030-07-01T09:00")
+        assert response.status_code == 200
+        assert response.get_json() == {"ok": True, "display": "09:00", "display_date": "01.07. po", "hours": "9,0"}
+        _, start, _, _, _ = self._state(app, event_id)
+        assert start == datetime(2030, 7, 1, 7, 0, tzinfo=timezone.utc)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "error"),
+        [
+            ("end_datetime", "2030-07-01T10:00", "Konec musí být po začátku akce."),
+            ("start_datetime", "2030-07-01T18:00", "Začátek musí být před koncem akce."),
+            ("start_datetime", "zítra", "Neplatný formát data a času."),
+            ("bogus", "2030-07-01T09:00", "Neznámé pole."),
+        ],
+    )
+    def test_datetime_rejected(self, app, admin_client, field, value, error):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._state(app, event_id)
+        response = self._post(admin_client, me_id, event_id, field, value)
+        assert response.status_code == 400
+        assert response.get_json()["error"] == error
+        assert self._state(app, event_id) == before
+
+    def test_advance_status_without_permission(self, app, coordinator_client, monkeypatch):
+        me_id, _, _ = _setup_table_manager(app)
+        event_id = _make_event_in_status(app, EventStatus.DRAFT, me_id=me_id)
+        monkeypatch.setitem(
+            ROLE_PERMISSIONS,
+            Role.COORDINATOR,
+            [c for c in ROLE_PERMISSIONS[Role.COORDINATOR] if c != "event.publish"],
+        )
+        response = self._post(coordinator_client, me_id, event_id, "advance_status", "")
+        assert response.status_code == 403
+        assert response.get_json() == {"ok": False, "error": "Nemáte oprávnění pro tuto operaci."}
+        with app.app_context():
+            assert db.session.get(Event, event_id).status == EventStatus.DRAFT
+            assert db.session.scalars(db.select(OutboxEmail)).all() == []
 
 
 class TestTableManagerConflictDetection:
