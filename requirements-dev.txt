@@ -582,9 +582,9 @@ execnet==2.1.2 \
     --hash=sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd \
     --hash=sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec
     # via pytest-xdist
-faker==40.44.0 \
-    --hash=sha256:97245a3756dcaf35418b89bea9f03ae6881557db0032bf048744c2aaee2a9108 \
-    --hash=sha256:db808a3ec33fe9ce5caf40b9fb61f85f46e429a56966f765209272adec83e4c6
+faker==40.54.0 \
+    --hash=sha256:2dd88ee8cb63a9149e19ef48bdd73879bc3854d8ba2d6c1535e902a762e603f7 \
+    --hash=sha256:38fba73e32699a9f1071724d67e5a66a84bf057987cffb27c9d0c979fda3f135
     # via -r requirements-dev.in
 filelock==4.2.4 \
     --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e \
