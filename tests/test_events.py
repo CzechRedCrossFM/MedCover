@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from html import escape
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +23,7 @@ from app.models.qualification import Qualification
 from app.models.role import Role
 from app.models.settings import get_settings
 from app.models.user import EventTimeFormat, UserAccount
+from app.routes.events.crud import _group_end_ids
 from app.utils import format_event_time
 from tests.conftest import (
     _get_csrf,
@@ -3213,3 +3215,201 @@ class TestEquipmentPlanOnEdit:
         with app.app_context():
             event = db.session.get(Event, event_id)
             assert len(event.equipment_plans) == 0
+
+
+def _ev(id_, start=None, status=EventStatus.PUBLISHED, rp=None):
+    return SimpleNamespace(id=id_, start_datetime=start, status=status, responsible_person_id=rp)
+
+
+def _utc(*args):
+    return datetime(*args, tzinfo=timezone.utc)
+
+
+class TestIndexGroupEnds:
+    def _ends(self, app, starts, sort_col="start"):
+        events = [_ev(i, s) for i, s in enumerate(starts, 1)]
+        with app.app_context():
+            return _group_end_ids(events, sort_col)
+
+    def test_sunday_to_monday_separates(self, app):
+        assert self._ends(app, [_utc(2026, 3, 1, 10), _utc(2026, 3, 2, 10)]) == {1}
+
+    def test_same_week_no_separator(self, app):
+        assert self._ends(app, [_utc(2026, 3, 2, 10), _utc(2026, 3, 8, 10)]) == set()
+
+    def test_week_uses_local_time_not_utc(self, app):
+        # 23:30 UTC Sunday is 00:30 Monday in Prague
+        assert self._ends(app, [_utc(2026, 3, 1, 23, 30), _utc(2026, 3, 2, 10)]) == set()
+        assert self._ends(app, [_utc(2026, 3, 1, 22, 30), _utc(2026, 3, 2, 10)]) == {1}
+
+    def test_dst_change_boundary(self, app):
+        assert self._ends(app, [_utc(2026, 3, 29, 21, 30), _utc(2026, 3, 29, 22, 30)]) == {1}
+
+    def test_year_boundary(self, app):
+        assert self._ends(app, [_utc(2026, 12, 28, 10), _utc(2027, 1, 3, 10)]) == set()
+        assert self._ends(app, [_utc(2027, 1, 3, 10), _utc(2027, 1, 4, 10)]) == {1}
+
+    def test_descending_order(self, app):
+        assert self._ends(app, [_utc(2026, 3, 2, 10), _utc(2026, 3, 1, 10)]) == {1}
+
+    def test_status_groups(self, app):
+        a, b = EventStatus.PUBLISHED, EventStatus.DRAFT
+        events = [_ev(1, status=a), _ev(2, status=a), _ev(3, status=b), _ev(4, status=a)]
+        with app.app_context():
+            assert _group_end_ids(events, "status") == {2, 3}
+
+    def test_rp_groups_treat_none_as_one_group(self, app):
+        events = [_ev(1, rp=None), _ev(2, rp=None), _ev(3, rp=5), _ev(4, rp=5), _ev(5, rp=None)]
+        with app.app_context():
+            assert _group_end_ids(events, "rp") == {2, 4}
+
+    @pytest.mark.parametrize("sort_col", ["name", "total", "bogus"])
+    def test_other_sorts_have_no_groups(self, app, sort_col):
+        events = [_ev(1, status=EventStatus.DRAFT), _ev(2, status=EventStatus.PUBLISHED)]
+        with app.app_context():
+            assert _group_end_ids(events, sort_col) == set()
+
+    def test_empty_and_single(self, app):
+        with app.app_context():
+            assert _group_end_ids([], "status") == set()
+            assert _group_end_ids([_ev(1)], "status") == set()
+
+
+class TestIndexGroupSeparatorsRendered:
+    def _make(self, app):
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Skupina A1")
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Skupina A2")
+        _make_event_in_status(app, EventStatus.ASSIGNMENTS_OPEN, name="Skupina B")
+
+    def test_separator_count_and_row_count(self, app, admin_client):
+        self._make(app)
+        html = admin_client.get("/events/?sort=status&statuses=PUBLISHED,ASSIGNMENTS_OPEN").data.decode()
+        body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+        assert body.count("events-group-end") == 1
+        assert body.count("data-event-id=") == 3
+
+    def test_no_separator_for_name_sort(self, app, admin_client):
+        self._make(app)
+        html = admin_client.get("/events/?sort=name&statuses=PUBLISHED,ASSIGNMENTS_OPEN").data.decode()
+        assert "events-group-end" not in html.split("<tbody>", 1)[1]
+
+
+_ROW_RE = re.compile(r'<tr class="([^"]*)"\s+data-status="[^"]*"[^>]*data-event-id="(\d+)"')
+
+
+def _rendered_rows(html: str) -> list[tuple[int, bool]]:
+    """(event id, has events-group-end) for each event row in the events table, in display order."""
+    body = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    return [(int(eid), "events-group-end" in cls.split()) for cls, eid in _ROW_RE.findall(body)]
+
+
+class TestIndexGroupSeparatorsBySort:
+    def test_start_sort_separates_local_weeks_asc_and_desc(self, app, admin_client):
+        # Sun 01.03. and Mon 02.03. in different weeks; Mon 02.03. and Sun 08.03. share one.
+        sun = _make_event_in_status(
+            app, EventStatus.PUBLISHED, start=_utc(2026, 3, 1, 10), end=_utc(2026, 3, 1, 12), name="Neděle"
+        )
+        mon = _make_event_in_status(
+            app, EventStatus.PUBLISHED, start=_utc(2026, 3, 2, 10), end=_utc(2026, 3, 2, 12), name="Pondělí"
+        )
+        sun2 = _make_event_in_status(
+            app, EventStatus.PUBLISHED, start=_utc(2026, 3, 8, 10), end=_utc(2026, 3, 8, 12), name="Neděle 2"
+        )
+        url = "/events/?sort=start&dir="
+        asc = _rendered_rows(admin_client.get(url + "asc").data.decode())
+        assert [r for r in asc if r[0] in (sun, mon, sun2)] == [(sun, True), (mon, False), (sun2, False)]
+        desc = _rendered_rows(admin_client.get(url + "desc").data.decode())
+        assert [r for r in desc if r[0] in (sun, mon, sun2)] == [(sun2, False), (mon, True), (sun, False)]
+
+    def test_start_sort_uses_local_week_boundary(self, app, admin_client):
+        # 23:30 UTC Sunday is already Monday in Prague: same week as the later Monday event.
+        a = _make_event_in_status(
+            app, EventStatus.PUBLISHED, start=_utc(2026, 3, 1, 23, 30), end=_utc(2026, 3, 2, 1), name="Půlnoc"
+        )
+        b = _make_event_in_status(
+            app, EventStatus.PUBLISHED, start=_utc(2026, 3, 2, 10), end=_utc(2026, 3, 2, 12), name="Ráno"
+        )
+        rows = _rendered_rows(admin_client.get("/events/?sort=start&dir=asc").data.decode())
+        assert [r for r in rows if r[0] in (a, b)] == [(a, False), (b, False)]
+
+    def test_status_sort_desc(self, app, admin_client):
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Stav A1")
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Stav A2")
+        _make_event_in_status(app, EventStatus.ASSIGNMENTS_OPEN, name="Stav B")
+        qs = "sort=status&statuses=PUBLISHED,ASSIGNMENTS_OPEN"
+        for direction in ("asc", "desc"):
+            rows = _rendered_rows(admin_client.get(f"/events/?{qs}&dir={direction}").data.decode())
+            assert len(rows) == 3
+            assert [end for _, end in rows] in ([False, True, False], [True, False, False])
+
+    def test_rp_sort_groups_and_none_group(self, app, admin_client):
+        with app.app_context():
+            rp = _make_user("rp-sep@example.com", "Testovací Rudolf", Role.COORDINATOR)
+            rp_id = rp.id
+        e1 = _make_event_in_status(app, EventStatus.PUBLISHED, name="RP bez 1")
+        e2 = _make_event_in_status(app, EventStatus.PUBLISHED, name="RP bez 2")
+        e3 = _make_event_in_status(app, EventStatus.PUBLISHED, name="RP s osobou")
+        with app.app_context():
+            db.session.get(Event, e3).responsible_person_id = rp_id
+            db.session.commit()
+        for direction in ("asc", "desc"):
+            rows = _rendered_rows(admin_client.get(f"/events/?sort=rp&dir={direction}").data.decode())
+            ids = [r[0] for r in rows]
+            assert sorted(ids) == sorted([e1, e2, e3])
+            ends = [end for _, end in rows]
+            # two no-RP rows form one block: exactly one separator, never between them
+            assert ends.count(True) == 1
+            assert ends[-1] is False
+            assert ends.index(True) == (0 if ids[0] == e3 else 1)
+
+    @pytest.mark.parametrize("sort_col", ["name", "total"])
+    def test_no_separators_for_ungrouped_sorts(self, app, admin_client, sort_col):
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Bez A")
+        _make_event_in_status(app, EventStatus.ASSIGNMENTS_OPEN, name="Bez B")
+        html = admin_client.get(f"/events/?sort={sort_col}&statuses=PUBLISHED,ASSIGNMENTS_OPEN").data.decode()
+        rows = _rendered_rows(html)
+        assert len(rows) == 2
+        assert not any(end for _, end in rows)
+
+    def test_single_and_empty_results_have_no_separator(self, app, admin_client):
+        only = _make_event_in_status(app, EventStatus.PUBLISHED, name="Jediná")
+        rows = _rendered_rows(admin_client.get("/events/?sort=status&statuses=PUBLISHED").data.decode())
+        assert rows == [(only, False)]
+        html = admin_client.get("/events/?sort=status&statuses=CANCELLED").data.decode()
+        assert "events-group-end" not in html
+
+    def test_name_search_recomputes_groups(self, app, admin_client):
+        _make_event_in_status(app, EventStatus.PUBLISHED, name="Hledaná X1")
+        _make_event_in_status(app, EventStatus.ASSIGNMENTS_OPEN, name="Jiná Y")
+        _make_event_in_status(app, EventStatus.ASSIGNMENTS_OPEN, name="Hledaná X2")
+        rows = _rendered_rows(
+            admin_client.get("/events/?sort=status&q=Hledaná&statuses=PUBLISHED,ASSIGNMENTS_OPEN").data.decode()
+        )
+        assert len(rows) == 2
+        assert [end for _, end in rows] in ([True, False],)  # PUBLISHED then ASSIGNMENTS_OPEN
+
+
+class TestTintedRowKeepsClass:
+    def test_group_end_on_tinted_row(self, app, admin_client):
+        with app.app_context():
+            me = MasterEvent(name="ME tint")
+            db.session.add(me)
+            db.session.flush()
+            for name, status in (
+                ("Školení tint 1", EventStatus.PUBLISHED),
+                ("Školení tint 2", EventStatus.ASSIGNMENTS_OPEN),
+            ):
+                db.session.add(
+                    Event(
+                        name=name,
+                        master_event_id=me.id,
+                        status=status,
+                        event_type=EventType.TRAINING,
+                        start_datetime=datetime(2030, 6, 1, 10, tzinfo=timezone.utc),
+                        end_datetime=datetime(2030, 6, 1, 12, tzinfo=timezone.utc),
+                    )
+                )
+            db.session.commit()
+        html = admin_client.get("/events/?sort=status&statuses=PUBLISHED,ASSIGNMENTS_OPEN").data.decode()
+        assert len(re.findall(r'<tr class="[^"]*table-info[^"]*"', html)) == 2
+        assert len(re.findall(r'<tr class="[^"]*table-info[^"]*events-group-end', html)) == 1

@@ -223,7 +223,7 @@
         {% for event in events %}
         {% set me_is_general = event.master_event.is_general %}
         {% set me_name = event.master_event.name %}
-        <tr class="{{ event_type_row_class(event.event_type) }} {{ 'text-muted' if event.status == EventStatus.CANCELLED or event.archived }}"
+        <tr class="{{ event_type_row_class(event.event_type) }} {{ 'text-muted' if event.status == EventStatus.CANCELLED or event.archived }} {{ 'events-group-end' if event.id in group_end_ids }}"
             data-status="{{ event.status.name }}"
             data-eligible="{{ '1' if eligible_spot_map.get(event.id) else '0' }}"
             data-me="{{ '' if me_is_general else me_name }}"
