@@ -5,15 +5,22 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import event as sa_event
 
+from app.constants import RECORD_MODIFIED_MSG
 from app.extensions import db
 from app.models.assignment import Assignment
 from app.models.audit import AuditLogEntry
-from app.models.event import Event, EventSpot, EventStatus
+from app.models.event import Event, EventSpot, EventStatus, StaffingMode
 from app.models.master_event import MasterEvent
 from app.models.outbox import OutboxEmail
+from app.models.qualification import Qualification
 from app.models.role import ROLE_PERMISSIONS, Role
 from app.models.user import UserAccount
-from tests.conftest import _make_event_in_status, _make_user
+from tests.conftest import (
+    _make_event_in_status,
+    _make_event_with_spot,
+    _make_user,
+    _post_with_stale_commit,
+)
 
 
 def _make_me(name: str = "Test ME", **kwargs) -> MasterEvent:
@@ -244,6 +251,37 @@ class TestMasterEventEdit:
             )
             assert entry is not None
 
+    def test_edit_duplicate_name_rejected(self, app, admin_client):
+        with app.app_context():
+            _make_me("Obsazený název")
+            me = _make_me("Původní název")
+            me_id, version = me.id, me.version
+
+        response = admin_client.post(
+            f"/master-events/{me_id}/edit", data={"name": "Obsazený název", "version": str(version)}
+        )
+        assert response.status_code == 200
+        assert "Nadřazená akce s tímto názvem již existuje.".encode() in response.data
+        with app.app_context():
+            unchanged = db.session.get(MasterEvent, me_id)
+            assert (unchanged.name, unchanged.version) == ("Původní název", version)
+
+    def test_edit_stale_commit(self, app, admin_client):
+        with app.app_context():
+            me = _make_me("Původní název")
+            me_id, version = me.id, me.version
+
+        response = _post_with_stale_commit(
+            admin_client, f"/master-events/{me_id}/edit", data={"name": "Nový název", "version": str(version)}
+        )
+        assert response.status_code == 302
+        assert response.headers["Location"] == f"/master-events/{me_id}/edit"
+        page = admin_client.get(response.headers["Location"])
+        assert RECORD_MODIFIED_MSG.encode() in page.data
+        with app.app_context():
+            unchanged = db.session.get(MasterEvent, me_id)
+            assert (unchanged.name, unchanged.version) == ("Původní název", version)
+
     def test_edit_404_for_missing(self, admin_client):
         response = admin_client.get("/master-events/999999/edit")
         assert response.status_code == 404
@@ -299,6 +337,29 @@ class TestMasterEventArchive:
             me_id = me.id
         response = member_client.post(f"/master-events/{me_id}/unarchive")
         assert response.status_code == 403
+
+    @pytest.mark.parametrize(
+        ("url_suffix", "archived", "message"),
+        [
+            ("archive", True, "Nadřazená akce je již archivována."),
+            ("unarchive", False, "Nadřazená akce není archivována."),
+        ],
+        ids=["archive-already-archived", "unarchive-not-archived"],
+    )
+    def test_noop_transition_warns(self, app, admin_client, url_suffix, archived, message):
+        with app.app_context():
+            me = _make_me("Nezměněná ME", archived=archived)
+            me_id, version = me.id, me.version
+
+        response = admin_client.post(f"/master-events/{me_id}/{url_suffix}")
+        assert response.status_code == 302
+        assert response.headers["Location"] == f"/master-events/{me_id}"
+        page = admin_client.get(response.headers["Location"])
+        assert message.encode() in page.data
+        with app.app_context():
+            unchanged = db.session.get(MasterEvent, me_id)
+            assert (unchanged.archived, unchanged.version) == (archived, version)
+            assert db.session.scalar(db.select(db.func.count()).select_from(AuditLogEntry)) == 0
 
     def test_archive_writes_audit_log(self, app, admin_client):
         with app.app_context():
@@ -1028,6 +1089,18 @@ class TestTableEventClone:
             assert clone.name == "Source Event kopie"
             assert len(clone.spots) == 1
 
+    def test_clone_foreign_event_404(self, app, admin_client):
+        me_id, _, _ = _setup_table_manager(app)
+        foreign_event_id = _make_event_in_status(app, name="Cizí akce")
+        with app.app_context():
+            events_before = db.session.scalar(db.select(db.func.count()).select_from(Event))
+
+        resp = admin_client.post(f"/master-events/{me_id}/table/event/{foreign_event_id}/clone")
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Akce nenalezena."}
+        with app.app_context():
+            assert db.session.scalar(db.select(db.func.count()).select_from(Event)) == events_before
+
 
 # ── Master Event Archive Cascade ─────────────────────────────────────────────
 
@@ -1184,3 +1257,233 @@ class TestMasterEventArchiveCascade:
         assert "Archivováno" in body
         # "Celkem akcí" (total) counts only active events — 1 of the 2 is archived.
         assert '<div class="fs-3 fw-bold">1</div>' in body
+
+
+# ── Table Manager: assignment, spot and eligibility guards ───────────────────
+
+
+def _assignment_rows(app) -> list[tuple[int, str]]:
+    with app.app_context():
+        return [(a.spot_id, str(a.user_id)) for a in db.session.scalars(db.select(Assignment)).all()]
+
+
+def _make_member(app, email: str, name: str) -> str:
+    with app.app_context():
+        return str(_make_user(email, name, Role.MEMBER).id)
+
+
+def _post_table_assign(client, me_id, spot_id, user_id):
+    return client.post(f"/master-events/{me_id}/table/assign/{spot_id}", data={"user_id": user_id})
+
+
+class TestTableAssignGuards:
+    def test_unknown_spot_404(self, app, admin_client):
+        me_id, _, spot_id = _setup_table_manager(app)
+        user_id = _make_member(app, "assign_a@example.com", "Testovací Rudolf")
+
+        resp = _post_table_assign(admin_client, me_id, spot_id + 1000, user_id)
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Pozice nenalezena."}
+        assert _assignment_rows(app) == []
+
+    def test_spot_of_other_me_404(self, app, admin_client):
+        me_id, _, _ = _setup_table_manager(app)
+        _, foreign_spot_id = _make_event_with_spot(app, name="Cizí akce")
+        user_id = _make_member(app, "assign_a@example.com", "Testovací Rudolf")
+
+        resp = _post_table_assign(admin_client, me_id, foreign_spot_id, user_id)
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Akce nenalezena."}
+        assert _assignment_rows(app) == []
+
+    @pytest.mark.parametrize(
+        ("user_id", "error"),
+        [
+            ("", "Vyberte uživatele."),
+            ("00000000-0000-0000-0000-000000000001", "Uživatel nenalezen."),
+        ],
+        ids=["empty", "unknown-uuid"],
+    )
+    def test_rejected_user_id(self, app, admin_client, user_id, error):
+        me_id, _, spot_id = _setup_table_manager(app)
+
+        resp = _post_table_assign(admin_client, me_id, spot_id, user_id)
+        assert resp.status_code == 400
+        assert resp.get_json() == {"ok": False, "error": error}
+        assert _assignment_rows(app) == []
+
+    def test_filled_spot_409(self, app, admin_client):
+        me_id, _, spot_id = _setup_table_manager(app)
+        first_id = _make_member(app, "assign_a@example.com", "Testovací Rudolf")
+        second_id = _make_member(app, "assign_b@example.com", "Vymyšlený Jiří")
+        assert _post_table_assign(admin_client, me_id, spot_id, first_id).status_code == 200
+
+        resp = _post_table_assign(admin_client, me_id, spot_id, second_id)
+        assert resp.status_code == 409
+        assert resp.get_json() == {"ok": False, "error": "Tato pozice je již obsazena."}
+        assert _assignment_rows(app) == [(spot_id, first_id)]
+
+    def test_overlap_warning(self, app, admin_client):
+        me_id, _, spot_id = _setup_table_manager(app)
+        user_id = _make_member(app, "assign_a@example.com", "Testovací Rudolf")
+        overlap_id = _make_event_in_status(
+            app,
+            EventStatus.ASSIGNMENTS_OPEN,
+            name="Testovací souběžná akce",
+            start=datetime(2030, 7, 1, 9, 0, tzinfo=timezone.utc),
+            end=datetime(2030, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        with app.app_context():
+            overlap_spot = EventSpot(event_id=overlap_id)
+            db.session.add(overlap_spot)
+            db.session.flush()
+            overlap_spot_id = overlap_spot.id
+            db.session.add(Assignment(spot_id=overlap_spot_id, user_id=user_id))
+            db.session.commit()
+
+        resp = _post_table_assign(admin_client, me_id, spot_id, user_id)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["warning"] == (
+            "Uživatel Testovací Rudolf je již přihlášen na překrývající se akci 'Testovací souběžná akce'."
+        )
+        assert set(_assignment_rows(app)) == {(spot_id, user_id), (overlap_spot_id, user_id)}
+
+
+class TestTableUnassignGuards:
+    @staticmethod
+    def _assign(app, spot_id) -> int:
+        user_id = _make_member(app, "unassign_a@example.com", "Testovací Rudolf")
+        with app.app_context():
+            assignment = Assignment(spot_id=spot_id, user_id=user_id)
+            db.session.add(assignment)
+            db.session.commit()
+            return assignment.id
+
+    def test_unknown_assignment_404(self, app, admin_client):
+        me_id, _, spot_id = _setup_table_manager(app)
+        assignment_id = self._assign(app, spot_id)
+
+        resp = admin_client.post(f"/master-events/{me_id}/table/unassign/{assignment_id + 1000}")
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Přiřazení nenalezeno."}
+        assert len(_assignment_rows(app)) == 1
+
+    def test_assignment_of_other_me_404(self, app, admin_client):
+        me_id, _, _ = _setup_table_manager(app)
+        _, foreign_spot_id = _make_event_with_spot(app, name="Cizí akce")
+        assignment_id = self._assign(app, foreign_spot_id)
+
+        resp = admin_client.post(f"/master-events/{me_id}/table/unassign/{assignment_id}")
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Akce nenalezena."}
+        assert len(_assignment_rows(app)) == 1
+
+    def test_member_without_rights_403(self, app, member_client):
+        me_id, _, spot_id = _setup_table_manager(app)
+        assignment_id = self._assign(app, spot_id)
+
+        resp = member_client.post(f"/master-events/{me_id}/table/unassign/{assignment_id}")
+        assert resp.status_code == 403
+        assert len(_assignment_rows(app)) == 1
+
+
+class TestTableSpotsUpdateValidation:
+    @staticmethod
+    def _post(client, me_id, event_id, qual_ids_json="[]", new_count="2"):
+        return client.post(
+            f"/master-events/{me_id}/table/spots/update",
+            data={"event_id": event_id, "qual_ids_json": qual_ids_json, "new_count": new_count},
+        )
+
+    @staticmethod
+    def _snapshot(app, event_id):
+        with app.app_context():
+            spots = db.session.scalar(
+                db.select(db.func.count()).select_from(EventSpot).where(EventSpot.event_id == event_id)
+            )
+            audits = db.session.scalar(db.select(db.func.count()).select_from(AuditLogEntry))
+            return spots, audits, db.session.get(Event, event_id).version
+
+    @pytest.mark.parametrize(
+        ("overrides", "error"),
+        [
+            ({"event_id": "x"}, "Neplatné ID akce."),
+            ({"qual_ids_json": "not json"}, "Neplatné kvalifikace."),
+            ({"qual_ids_json": '{"a": 1}'}, "Neplatné kvalifikace."),
+            ({"qual_ids_json": "[[1]]"}, "Neplatné kvalifikace."),
+            ({"new_count": "-1"}, "Počet musí být celé číslo od 0 do 50."),
+            ({"new_count": "51"}, "Počet musí být celé číslo od 0 do 50."),
+            ({"new_count": "x"}, "Počet musí být celé číslo od 0 do 50."),
+        ],
+        ids=["event-id", "json", "dict", "nested-list", "negative", "over-50", "not-int"],
+    )
+    def test_invalid_input_400(self, app, admin_client, overrides, error):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._snapshot(app, event_id)
+
+        resp = self._post(admin_client, me_id, **{"event_id": event_id, **overrides})
+        assert resp.status_code == 400
+        assert resp.get_json() == {"ok": False, "error": error}
+        assert self._snapshot(app, event_id) == before
+
+    def test_event_of_other_me_404(self, app, admin_client):
+        me_id, _, _ = _setup_table_manager(app)
+        foreign_event_id, _ = _make_event_with_spot(app, name="Cizí akce")
+        before = self._snapshot(app, foreign_event_id)
+
+        resp = self._post(admin_client, me_id, foreign_event_id)
+        assert resp.status_code == 404
+        assert resp.get_json() == {"ok": False, "error": "Akce nenalezena."}
+        assert self._snapshot(app, foreign_event_id) == before
+
+    def test_conditions_event_rejected(self, app, admin_client):
+        with app.app_context():
+            me = _make_me("Podmínková ME")
+            event = Event(
+                name="Testovací akce s podmínkami",
+                master_event_id=me.id,
+                status=EventStatus.ASSIGNMENTS_OPEN,
+                staffing_mode=StaffingMode.CONDITIONS,
+                minimum_participants=1,
+                maximum_participants=2,
+                start_datetime=datetime(2030, 7, 1, 8, 0, tzinfo=timezone.utc),
+                end_datetime=datetime(2030, 7, 1, 16, 0, tzinfo=timezone.utc),
+            )
+            db.session.add(event)
+            db.session.commit()
+            me_id, event_id = me.id, event.id
+        before = self._snapshot(app, event_id)
+
+        resp = self._post(admin_client, me_id, event_id)
+        assert resp.status_code == 400
+        assert resp.get_json() == {"ok": False, "error": "Tato akce používá podmínky."}
+        assert self._snapshot(app, event_id) == before
+
+    def test_same_count_noop(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        before = self._snapshot(app, event_id)
+
+        resp = self._post(admin_client, me_id, event_id, new_count="1")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ok": True}
+        assert self._snapshot(app, event_id) == before
+
+    def test_increase_ignores_deleted_qualification(self, app, admin_client):
+        me_id, event_id, _ = _setup_table_manager(app)
+        with app.app_context():
+            active = Qualification(name="Testovací aktivní")
+            removed = Qualification(name="Testovací smazaná", is_deleted=True)
+            db.session.add_all([active, removed])
+            db.session.commit()
+            active_id, removed_id = active.id, removed.id
+
+        resp = self._post(admin_client, me_id, event_id, qual_ids_json=f"[{active_id}, {removed_id}]", new_count="2")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"ok": True}
+        with app.app_context():
+            added = db.session.scalars(
+                db.select(EventSpot).where(EventSpot.event_id == event_id, EventSpot.required_qualifications.any())
+            ).all()
+            assert [[q.id for q in s.required_qualifications] for s in added] == [[active_id], [active_id]]
