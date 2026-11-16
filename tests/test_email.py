@@ -514,7 +514,7 @@ class TestSmtpAdminSettings:
         assert b"devpassword" not in response.data
         assert b"smtp_password_enc" not in response.data
 
-    def test_smtp_not_configured_exits_nonzero(self, app):
+    def test_smtp_not_configured_exits_with_error(self, app):
         """CLI send-test-email must exit 1 when SMTP is not configured."""
 
         with app.app_context():
@@ -528,8 +528,8 @@ class TestSmtpAdminSettings:
             cmd = app.cli.commands["send-test-email"]
             result = runner.invoke(cmd, ["nobody@test.cz"], catch_exceptions=False)
 
-        assert result.exit_code != 0
-        assert "SMTP" in result.output
+        assert result.exit_code == 1
+        assert result.output == "✘ SMTP is not configured in AppSettings. Run the setup wizard first.\n"
 
 
 # ── OutboxEmail model unit tests ──────────────────────────────────────────────
