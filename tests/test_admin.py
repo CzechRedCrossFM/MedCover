@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from cryptography.fernet import Fernet
 
 import app.routes.admin as admin_routes
 from app.extensions import db
@@ -92,18 +91,16 @@ class TestAppSettings:
     def test_settings_page_does_not_expose_smtp_password(self, app, admin_client):
         """The plaintext SMTP password must never appear in the settings page HTML."""
 
-        # Configure a real (encrypted) SMTP password in settings
         test_password = "super_secret_smtp_pass_99"
         with app.app_context():
             settings = get_settings()
-            key = Fernet.generate_key()
-            f = Fernet(key)
-            settings.smtp_password_encrypted = f.encrypt(test_password.encode()).decode()
+            settings.set_smtp_password(test_password)
             db.session.commit()
 
         response = admin_client.get("/admin/settings/")
         assert response.status_code == 200
-        # The plaintext password must never appear in the HTML
+        # positive control: the page knows a password is stored
+        assert "(beze změny)".encode() in response.data
         assert test_password.encode() not in response.data
 
 
