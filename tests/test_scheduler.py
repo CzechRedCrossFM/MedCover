@@ -1,11 +1,14 @@
 """Tests for scheduler auto-transition functions with retry on concurrent modification."""
 
 import importlib
+import inspect
 import logging
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+import schedule
 import sqlalchemy as sa
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -49,15 +52,110 @@ def _make_event(app, status: EventStatus, end_offset_hours: int = -1) -> int:
 
 
 @pytest.fixture
-def sm(app):
+def sm(app, monkeypatch):
     """Import scheduler.main bound to the test app.
 
     The module runs ``create_app("production")`` at import time, which would
     bind to ``DATABASE_URL`` instead of this worker's test DB. Patch it and
-    reload so a copy imported earlier in the worker is not reused.
+    reload so a copy imported earlier in the worker is not reused. The module
+    sets ``OTEL_SERVICE_NAME`` on import, so it is set through monkeypatch first
+    to have it removed again at teardown.
     """
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "medcover-scheduler")
     with patch("app.create_app", return_value=app):
         return importlib.reload(importlib.import_module("scheduler.main"))
+
+
+def _due(job: schedule.Job) -> None:
+    job.next_run = datetime.now() - timedelta(seconds=1)
+
+
+class TestLoggedTask:
+    def test_failing_job_is_rescheduled_and_others_still_run(self, sm) -> None:
+        scheduler = schedule.Scheduler()
+        failing = MagicMock(side_effect=RuntimeError("boom"), __name__="failing")
+        healthy = MagicMock(__name__="healthy")
+        failing_job = scheduler.every(1).minutes.do(sm._logged_task("failing", failing))
+        healthy_job = scheduler.every(1).minutes.do(sm._logged_task("healthy", healthy))
+        _due(failing_job)
+        _due(healthy_job)
+
+        scheduler.run_pending()
+
+        healthy.assert_called_once()
+        assert failing_job.next_run > datetime.now()
+        scheduler.run_pending()
+        failing.assert_called_once()
+
+    def test_failure_logging_is_throttled_and_recovery_logged(self, sm, caplog, monkeypatch) -> None:
+        clock = [1000.0]
+        monkeypatch.setattr(sm, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        steps: list[BaseException | None] = [
+            RuntimeError("one"),
+            RuntimeError("two"),
+            RuntimeError("three"),
+            ValueError("four"),
+            None,
+            None,
+        ]
+        fn = MagicMock(side_effect=steps, __name__="flaky")
+        task = sm._logged_task("flaky", fn)
+        caplog.set_level(logging.DEBUG, logger="scheduler.main")
+
+        def run(advance: float = 0.0) -> list[logging.LogRecord]:
+            clock[0] += advance
+            caplog.clear()
+            task()
+            return [r for r in caplog.records if r.levelno > logging.DEBUG]
+
+        first = run()
+        assert [r.levelno for r in first] == [logging.ERROR]
+        assert first[0].exc_info is not None
+        assert run(10) == []
+        assert [r.levelno for r in run(16 * 60)] == [logging.ERROR]
+        type_change = run(10)
+        assert [r.levelno for r in type_change] == [logging.ERROR]
+        assert type_change[0].exc_info is not None
+        recovered = run()
+        assert [r.levelno for r in recovered] == [logging.INFO]
+        assert "recovered after 4 consecutive" in recovered[0].getMessage()
+        assert run() == []
+
+        other = sm._logged_task("other", MagicMock(side_effect=[RuntimeError("x")], __name__="other"))
+        caplog.clear()
+        other()
+        assert [r.levelno for r in caplog.records] == [logging.DEBUG, logging.ERROR]
+
+    @pytest.mark.parametrize("exc", [KeyboardInterrupt, SystemExit])
+    def test_base_exceptions_propagate(self, sm, exc) -> None:
+        task = sm._logged_task("stop", MagicMock(side_effect=exc, __name__="stop"))
+        with pytest.raises(exc):
+            task()
+
+    def test_all_jobs_are_registered_through_the_wrapper(self, sm) -> None:
+        schedule.clear()
+        try:
+            sm.register_jobs()
+            jobs = list(schedule.get_jobs())
+            assert len(jobs) == 9
+            unwrapped = []
+            for job in jobs:
+                wrapper = job.job_func.func
+                target = inspect.unwrap(wrapper)
+                assert wrapper is not target
+                assert inspect.getmodule(target) is sm
+                unwrapped.append(target)
+            assert sm.process_email_queue in unwrapped
+        finally:
+            schedule.clear()
+
+    def test_email_queue_settings_failure_is_contained(self, sm, caplog) -> None:
+        task = sm._logged_task("process_email_queue", sm.process_email_queue)
+        with patch.object(sm, "get_settings", side_effect=RuntimeError("settings down")):
+            task()
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert errors[0].exc_info is not None
 
 
 class TestOpenAssignments:
