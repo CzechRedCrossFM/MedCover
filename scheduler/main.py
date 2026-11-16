@@ -15,7 +15,6 @@ from sqlalchemy.orm.exc import StaleDataError
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import create_app, flush_telemetry
-from app.db_timeout import query_timeout_override
 from app.extensions import db
 from app.mail import drain_batched_outbox, drain_one_outbox_email
 from app.models.audit import AuditLogEntry
@@ -40,13 +39,13 @@ os.environ.setdefault("OTEL_SERVICE_NAME", "medcover-scheduler")
 # HYT00 instead of freezing the single-threaded loop; the backup job is exempt.
 SCHEDULER_DB_QUERY_TIMEOUT_SECONDS: int = int(os.environ.get("SCHEDULER_DB_QUERY_TIMEOUT_SECONDS", "60"))
 # The watchdog ends the process when the main loop has made no progress for this
-# long; it must exceed the longest legitimate job (the nightly backup).
+# long (0 = no watchdog); it must exceed the longest legitimate job (the nightly backup).
 SCHEDULER_WATCHDOG_TIMEOUT_MINUTES: int = int(os.environ.get("SCHEDULER_WATCHDOG_TIMEOUT_MINUTES", "30"))
 WATCHDOG_CHECK_INTERVAL_SECONDS: int = 30
 # A stall report blocked on a logging handler lock must not keep the process alive.
 WATCHDOG_REPORT_TIMEOUT_SECONDS: float = 10
-if SCHEDULER_DB_QUERY_TIMEOUT_SECONDS < 0 or SCHEDULER_WATCHDOG_TIMEOUT_MINUTES <= 0:
-    raise ValueError("SCHEDULER_DB_QUERY_TIMEOUT_SECONDS must be >= 0 and SCHEDULER_WATCHDOG_TIMEOUT_MINUTES > 0")
+if SCHEDULER_DB_QUERY_TIMEOUT_SECONDS < 0 or SCHEDULER_WATCHDOG_TIMEOUT_MINUTES < 0:
+    raise ValueError("SCHEDULER_DB_QUERY_TIMEOUT_SECONDS and SCHEDULER_WATCHDOG_TIMEOUT_MINUTES must be >= 0")
 app = create_app("production", query_timeout=SCHEDULER_DB_QUERY_TIMEOUT_SECONDS)
 
 # Sentinel user ID used in audit log rows written by the scheduler (no human actor)
@@ -313,9 +312,7 @@ def send_admin_digest_task() -> None:
 
 def scheduled_backup_task() -> None:
     """Create a daily backup if backup_schedule_enabled is True in AppSettings."""
-    # The backup's full-table reads may legitimately exceed the per-statement limit;
-    # the watchdog still bounds the job.
-    with app.app_context(), query_timeout_override(0):
+    with app.app_context():
         run_scheduled_backup(db.session)
 
 
@@ -350,7 +347,7 @@ def run_watchdog(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     exit_process: Callable[[int], object] = os._exit,
-    report_timeout_seconds: float | None = None,
+    report_timeout_seconds: float = WATCHDOG_REPORT_TIMEOUT_SECONDS,
 ) -> None:
     """Exit the process when the main loop stalls, so the container platform restarts it.
 
@@ -358,18 +355,21 @@ def run_watchdog(
     The report runs in a daemon thread and is waited for only briefly: a main thread
     blocked inside a logging handler holds its lock, which would block the report forever.
     """
-    if report_timeout_seconds is None:
-        report_timeout_seconds = WATCHDOG_REPORT_TIMEOUT_SECONDS
     while True:
         sleep(check_interval_seconds)
         stalled = clock() - progress.last_pass
         if stalled > timeout_seconds:
-            reporter = threading.Thread(
-                target=_report_stall, args=(stalled, progress.current_job), name="scheduler-stall-report", daemon=True
-            )
-            reporter.start()
-            reporter.join(report_timeout_seconds)
-            exit_process(1)
+            try:
+                reporter = threading.Thread(
+                    target=_report_stall,
+                    args=(stalled, progress.current_job),
+                    name="scheduler-stall-report",
+                    daemon=True,
+                )
+                reporter.start()
+                reporter.join(report_timeout_seconds)
+            finally:
+                exit_process(1)
             return
 
 
@@ -401,12 +401,13 @@ if __name__ == "__main__":
     )
 
     _progress.last_pass = time.monotonic()
-    threading.Thread(
-        target=run_watchdog,
-        args=(_progress, SCHEDULER_WATCHDOG_TIMEOUT_MINUTES * 60),
-        name="scheduler-watchdog",
-        daemon=True,
-    ).start()
+    if SCHEDULER_WATCHDOG_TIMEOUT_MINUTES:
+        threading.Thread(
+            target=run_watchdog,
+            args=(_progress, SCHEDULER_WATCHDOG_TIMEOUT_MINUTES * 60),
+            name="scheduler-watchdog",
+            daemon=True,
+        ).start()
 
     _last_alive_log: float = 0.0  # monotonic timestamp of last hourly alive message
     _last_heartbeat: float = 0.0  # monotonic timestamp of last heartbeat write

@@ -145,6 +145,20 @@ def test_override_lifts_timeout_and_is_restored(timeout_app: tuple[Flask, SQLAlc
     assert _dbapi_timeout(sa) == 1
 
 
+def test_closed_pooled_connection_is_replaced_on_checkout(timeout_app: tuple[Flask, SQLAlchemy]) -> None:
+    _, sa = timeout_app
+    assert _dbapi_timeout(sa) == 1
+    sa.session.remove()
+    pooled = sa.engine.pool._pool.queue[0].dbapi_connection
+    pooled.close()  # closed underneath the pool, e.g. by the driver after a network drop
+    # Checkin must not raise either, or the connection would never return to the pool.
+    for listener in sa.engine.pool.dispatch.checkin:
+        listener(pooled, None)
+
+    assert _dbapi_timeout(sa) == 1
+    assert sa.session.connection().connection.dbapi_connection is not pooled
+
+
 PROBE_APP = """\
 import os
 
