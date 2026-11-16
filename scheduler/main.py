@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import sys
@@ -47,19 +48,48 @@ MAIL_QUEUE_INTERVAL_SECONDS: int = int(os.environ.get("MAIL_QUEUE_INTERVAL_SECON
 # often to honor short schedule.every(...) intervals doesn't multiply DB writes.
 HEARTBEAT_INTERVAL_SECONDS: int = 5
 
+# A job that keeps failing logs its full traceback at most this often (or when the
+# exception type changes), so a 3 s job cannot flood the exception log.
+FAILURE_TRACEBACK_INTERVAL_SECONDS: float = 15 * 60
+
 
 def _logged_task(name: str, fn: Callable[[], None]) -> Callable[[], None]:
-    """Wrap a scheduled task to emit a DEBUG log line each time it fires.
+    """Wrap a scheduled task: DEBUG log on each run, and contain its failures.
 
     DEBUG, not INFO: tasks fire every minute whether or not there is work, and
     INFO is reserved for lines where something actually happened.
+
+    An exception is logged (throttled, see FAILURE_TRACEBACK_INTERVAL_SECONDS) instead of
+    propagating, so one failing job neither ends the process nor skips other jobs,
+    and ``schedule`` still advances the job to its next regular run.
     """
+    failures = 0
+    last_type: type[Exception] | None = None
+    last_traceback = 0.0
 
+    @functools.wraps(fn)
     def _wrapper() -> None:
+        nonlocal failures, last_type, last_traceback
         log.debug("Task running: %s", name)
-        fn()
+        try:
+            fn()
+        except Exception as exc:
+            failures += 1
+            now = time.monotonic()
+            if (
+                failures == 1
+                or type(exc) is not last_type
+                or now - last_traceback >= FAILURE_TRACEBACK_INTERVAL_SECONDS
+            ):
+                log.exception("Task %s failed (%d consecutive failure(s))", name, failures)
+                last_traceback = now
+            last_type = type(exc)
+            return
+        if failures:
+            log.info("Task %s recovered after %d consecutive failure(s)", name, failures)
+            failures = 0
+            last_type = None
 
-    _wrapper.__name__ = fn.__name__
     return _wrapper
 
 
@@ -72,18 +102,16 @@ def process_email_queue() -> None:
 
     Called every MAIL_QUEUE_INTERVAL_SECONDS (default 3 s).  At most one
     SMTP send per tick — the batched drain's early return prevents double sending.
+    Errors propagate to the ``_logged_task`` wrapper.
     """
     with app.app_context():
         s = get_settings()
         s.apply_to_app(app)
         # drain_batched_outbox calls external_url_for which needs a request context
         # when SERVER_NAME is not set in ProductionConfig.
-        try:
-            with app.test_request_context("/"):
-                if not drain_batched_outbox():
-                    drain_one_outbox_email()
-        except Exception as exc:  # noqa: BLE001
-            log.error("process_email_queue: drain failed: %s", exc, exc_info=True)
+        with app.test_request_context("/"):
+            if not drain_batched_outbox():
+                drain_one_outbox_email()
 
 
 def _apply_event_transition_with_retry(
@@ -271,8 +299,9 @@ def cleanup_work_report() -> None:
         cleanup_work_report_files(app.instance_path)
 
 
-if __name__ == "__main__":
-    schedule.every(MAIL_QUEUE_INTERVAL_SECONDS).seconds.do(process_email_queue)
+def register_jobs() -> None:
+    """Register every scheduler job on the default ``schedule`` scheduler, each through ``_logged_task``."""
+    schedule.every(MAIL_QUEUE_INTERVAL_SECONDS).seconds.do(_logged_task("process_email_queue", process_email_queue))
     schedule.every(1).minutes.do(_logged_task("open_assignments", open_assignments))
     schedule.every(1).minutes.do(_logged_task("close_completed_events", close_completed_events))
     schedule.every(5).minutes.do(_logged_task("send_reminders", send_reminders))
@@ -283,6 +312,10 @@ if __name__ == "__main__":
     schedule.every(1).minutes.do(_logged_task("scheduled_backup", scheduled_backup_task))
     schedule.every(15).minutes.do(_logged_task("record_metrics", record_metrics))
     schedule.every(1).hours.do(_logged_task("cleanup_work_report", cleanup_work_report))
+
+
+if __name__ == "__main__":
+    register_jobs()
 
     log.info(
         "Scheduler started (instance=%s pid=%d mail_queue_interval=%ds)",
