@@ -35,6 +35,8 @@ from tests.conftest import (
     _make_user,
 )
 
+ARCHIVED_MSG = "Akce je již archivována."
+
 
 def _event_form_data(master_event_id: int, name: str = "Test Event", rp_qual_id: int | None = None) -> dict:
     data: dict = {
@@ -399,6 +401,21 @@ class TestObsazeniBadges:
         html = resp.data.decode()
         assert "0/2 nutných pozic obsazeno" in html
         assert "0/1 volitelných pozic obsazeno" in html
+
+    def test_list_filled_optional_spot_is_counted(self, app, admin_client):
+        event_id = self._make_event_with_mand_and_opt(app)
+        with app.app_context():
+            user = _make_user("badge_optional@test.com", "Optional Filler", Role.MEMBER)
+            optional_spot = db.session.scalar(
+                db.select(EventSpot).where(EventSpot.event_id == event_id, EventSpot.is_optional == True)  # noqa: E712
+            )
+            db.session.add(Assignment(spot_id=optional_spot.id, user_id=user.id, assigned_by_id=user.id))
+            db.session.commit()
+
+        html = admin_client.get("/events/?statuses=ASSIGNMENTS_OPEN").data.decode()
+
+        assert 'class="badge bg-danger">0/2</span>' in html
+        assert 'class="badge bg-success">1/1&nbsp;vol.</span>' in html
 
     def test_list_mandatory_badge_turns_green_when_full(self, app, admin_client):
         """Filling all mandatory spots turns the mandatory badge green while optional stays yellow."""
@@ -2988,12 +3005,14 @@ class TestEventArchive:
             db.session.add(event)
             db.session.commit()
             event_id = event.id
-        response = coordinator_client.post(
-            f"/events/{event_id}/archive",
-            follow_redirects=True,
-        )
-        assert response.status_code == 200
-        assert "již archivována" in response.data.decode()
+            version = event.version
+        response = coordinator_client.post(f"/events/{event_id}/archive")
+        assert response.status_code == 302
+        assert response.headers["Location"] == f"/events/{event_id}"
+        with coordinator_client.session_transaction() as session:
+            assert session["_flashes"] == [("warning", ARCHIVED_MSG)]
+        with app.app_context():
+            assert db.session.get(Event, event_id).version == version
 
 
 # ── Unarchive (restore from archive) ─────────────────────────────────────────
