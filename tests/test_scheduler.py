@@ -3,6 +3,7 @@
 import importlib
 import inspect
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ import schedule
 import sqlalchemy as sa
 from sqlalchemy.orm.exc import StaleDataError
 
+from app import db_timeout
 from app.extensions import db
 from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventStatus
@@ -64,6 +66,132 @@ def sm(app, monkeypatch):
     monkeypatch.setenv("OTEL_SERVICE_NAME", "medcover-scheduler")
     with patch("app.create_app", return_value=app):
         return importlib.reload(importlib.import_module("scheduler.main"))
+
+
+class _Stop(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("env", "query_timeout", "watchdog_minutes"),
+    [
+        ({}, 60, 30),
+        ({"SCHEDULER_DB_QUERY_TIMEOUT_SECONDS": "7", "SCHEDULER_WATCHDOG_TIMEOUT_MINUTES": "45"}, 7, 45),
+    ],
+)
+def test_env_configures_timeouts(app, monkeypatch, env, query_timeout, watchdog_minutes) -> None:
+    for name in ("SCHEDULER_DB_QUERY_TIMEOUT_SECONDS", "SCHEDULER_WATCHDOG_TIMEOUT_MINUTES"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "medcover-scheduler")
+    with patch("app.create_app", return_value=app) as factory:
+        module = importlib.reload(importlib.import_module("scheduler.main"))
+
+    factory.assert_called_with("production", query_timeout=query_timeout)
+    assert module.SCHEDULER_DB_QUERY_TIMEOUT_SECONDS == query_timeout
+    assert module.SCHEDULER_WATCHDOG_TIMEOUT_MINUTES == watchdog_minutes
+    assert "scheduler-watchdog" not in [t.name for t in threading.enumerate()]
+
+
+def test_backup_job_runs_without_statement_timeout(sm) -> None:
+    seen: list[int | None] = []
+    with patch.object(
+        sm, "run_scheduled_backup", side_effect=lambda _s: seen.append(db_timeout._timeout_override.get())
+    ):
+        sm.scheduled_backup_task()
+    assert seen == [0]
+    assert db_timeout._timeout_override.get() is None
+
+
+def test_watchdog_exits_when_loop_stalls(sm, caplog) -> None:
+    progress = sm.LoopProgress(last_pass=0.0, current_job="scheduled_backup")
+    exit_process = MagicMock()
+    calls = MagicMock()
+    calls.attach_mock(exit_process, "exit_process")
+    with patch.object(sm, "flush_telemetry") as flush:
+        calls.attach_mock(flush, "flush")
+        sm.run_watchdog(progress, 60, clock=lambda: 61.0, sleep=lambda _s: None, exit_process=exit_process)
+
+    assert [c[0] for c in calls.mock_calls] == ["flush", "exit_process"]
+    exit_process.assert_called_once_with(1)
+    critical = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert len(critical) == 1
+    assert "scheduled_backup" in critical[0].getMessage()
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_watchdog_exits_even_when_the_report_raises(sm) -> None:
+    progress = sm.LoopProgress(last_pass=0.0)
+    exit_process = MagicMock()
+    with patch.object(sm, "flush_telemetry", side_effect=RuntimeError("flush broke")):
+        sm.run_watchdog(progress, 60, clock=lambda: 61.0, sleep=lambda _s: None, exit_process=exit_process)
+    exit_process.assert_called_once_with(1)
+
+
+def test_watchdog_exits_when_the_report_blocks(sm) -> None:
+    progress = sm.LoopProgress(last_pass=0.0)
+    exit_process = MagicMock()
+    release = threading.Event()
+    try:
+        with patch.object(sm, "flush_telemetry", side_effect=lambda: release.wait(10)):
+            sm.run_watchdog(
+                progress,
+                60,
+                clock=lambda: 61.0,
+                sleep=lambda _s: None,
+                exit_process=exit_process,
+                report_timeout_seconds=0.1,
+            )
+        exit_process.assert_called_once_with(1)
+    finally:
+        release.set()
+
+
+def test_watchdog_waits_while_loop_progresses(sm, caplog) -> None:
+    now = [0.0]
+    progress = sm.LoopProgress(last_pass=0.0)
+    exit_process = MagicMock()
+    checks = [0]
+
+    def sleep(interval: float) -> None:
+        checks[0] += 1
+        if checks[0] > 20:
+            raise _Stop
+        now[0] += interval
+        progress.last_pass = now[0] - 50  # a 50 s job under a 60 s timeout
+
+    with pytest.raises(_Stop):
+        sm.run_watchdog(progress, 60, 30, clock=lambda: now[0], sleep=sleep, exit_process=exit_process)
+    exit_process.assert_not_called()
+    assert not [r for r in caplog.records if r.levelno == logging.CRITICAL]
+
+
+def test_watchdog_ignores_sequential_jobs_that_each_finish_within_the_limit(sm, monkeypatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(sm, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    progress = sm.LoopProgress(last_pass=now[0])
+    monkeypatch.setattr(sm, "_progress", progress)
+    exit_process = MagicMock()
+
+    def check_watchdog() -> None:
+        calls = [0]
+
+        def sleep(_s: float) -> None:
+            calls[0] += 1
+            if calls[0] > 1:
+                raise _Stop
+
+        with pytest.raises(_Stop):
+            sm.run_watchdog(progress, 30 * 60, clock=lambda: now[0], sleep=sleep, exit_process=exit_process)
+
+    def job() -> None:
+        now[0] += 20 * 60  # each job is within the limit; together they are not
+        check_watchdog()
+
+    for _ in range(3):
+        sm._logged_task("job", job)()
+    exit_process.assert_not_called()
 
 
 def _due(job: schedule.Job) -> None:

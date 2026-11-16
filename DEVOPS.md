@@ -287,7 +287,7 @@ The embedded summary below reflects the actual file. Key points:
 - `web` uses `flask run --debug` (hot reload) in dev; production uses gunicorn via `CMD` in the Dockerfile
 - Both containers mount `.:/app` so local code changes reflect immediately
 - Both containers store DB backups in the bundled Azurite blob emulator — see [Backup storage](#backup-storage) below
-- Both containers have healthchecks; the scheduler checks a heartbeat file written every ~5 s
+- Both containers have healthchecks; the scheduler checks a heartbeat file written every ~5 s; in production the scheduler has no probe, but a watchdog thread ends a hung scheduler so the platform restarts it
 - `db` uses **MSSQL 2022 Express** (`mcr.microsoft.com/mssql/server:2022-latest`) with Czech collation and RCSI enabled
 
 ```yaml
@@ -606,6 +606,8 @@ Copy `.env.example` to `.env` for local development. Never commit `.env`.
 | `SECRET_KEY` | Flask session secret — generate a strong random value | `openssl rand -hex 32` |
 | `DATABASE_URL` | MSSQL connection string | `mssql+pyodbc://medcover:Dev_Password1!@db:1433/medcover_dev?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Optional. When set, the app exports OpenTelemetry traces/metrics to Azure Monitor. Unset (local, CI) means no telemetry. When `AZURE_CLIENT_ID` is also set (and `AZURE_CLIENT_SECRET` is not), ingestion authenticates with that managed identity (Entra ID) instead of the instrumentation key; the identity needs the *Monitoring Metrics Publisher* role on the Application Insights resource. The chosen auth mode is logged at startup. | supplied by the hosting environment |
+| `SCHEDULER_DB_QUERY_TIMEOUT_SECONDS` | Scheduler per-statement DB timeout; `0` disables it. The scheduled backup runs without it. | `60` (default) |
+| `SCHEDULER_WATCHDOG_TIMEOUT_MINUTES` | The scheduler exits with code 1 (so Container Apps / compose restart it) when its main loop makes no progress for this long; must exceed the longest backup run. | `30` (default) |
 
 > **Email / SMTP:** SMTP credentials are configured through the web UI setup wizard on first run and stored Fernet-encrypted in the `app_settings` database table. No `MAIL_*` environment variables are required.
 
