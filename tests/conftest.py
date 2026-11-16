@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import event as sa_event
 from sqlalchemy import text
+from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -431,11 +432,36 @@ def _seed_reference_data() -> None:
     if not _db.session.get(AppSettings, 1):
         _db.session.add(AppSettings(id=1, org_name="Test Org", setup_complete=True))
 
+    existing = set(_db.session.scalars(_db.select(Role.name)))
     for role_name in ROLE_PERMISSIONS:
-        if not _db.session.scalar(_db.select(Role).where(Role.name == role_name)):
+        if role_name not in existing:
             _db.session.add(Role(name=role_name))
 
     _db.session.commit()
+
+
+def _build_cleanup_sql() -> str:
+    """Build the single T-SQL batch that empties every mutable table.
+
+    NOCOUNT ON is required: pyodbc reads only the first result of a batch, and
+    with NOCOUNT OFF that is the first DELETE's rowcount, so a later error
+    would be lost. With NOCOUNT ON the error is the first result and surfaces.
+    NOCOUNT and XACT_ABORT are session settings on a pooled connection, so
+    they are switched back off at the end; leaving NOCOUNT on makes later ORM
+    UPDATEs report -1 matched rows (StaleDataError).
+    """
+    quote = mssql.dialect().identifier_preparer.quote
+    tables = [quote(t) for t in _MUTABLE_TABLES_LIST]
+    statements = [
+        *(f"ALTER TABLE {t} NOCHECK CONSTRAINT ALL;" for t in tables),
+        *(f"DELETE FROM {t};" for t in tables),
+        *(f"ALTER TABLE {t} CHECK CONSTRAINT ALL;" for t in tables),
+        f"DELETE FROM {quote(AppSettings.__tablename__)};",
+    ]
+    return "SET NOCOUNT ON; SET XACT_ABORT ON; " + " ".join(statements) + " SET XACT_ABORT OFF; SET NOCOUNT OFF;"
+
+
+_CLEANUP_SQL = _build_cleanup_sql()
 
 
 @pytest.fixture(autouse=True)
@@ -444,7 +470,12 @@ def clean_db(app):
 
     For MSSQL we disable FK constraints, delete all rows in each mutable
     table, then re-enable constraints. Identity columns are left as-is
-    (tests don't depend on specific ID values).
+    (tests don't depend on specific ID values). Everything, including the
+    AppSettings delete, is sent as one T-SQL batch: round trips to the remote
+    database dominate the per-test cost. Nothing is committed before
+    ``conn.commit()``, so an error leaves no half-applied cleanup; SQLAlchemy
+    rolls back, and the connection is invalidated so that session settings
+    from a failed batch never return to the pool.
 
     AppSettings is deleted and re-seeded via ``_seed_reference_data`` so that
     any column added to the model is automatically reset to its default —
@@ -458,23 +489,12 @@ def clean_db(app):
     with app.app_context():
         _db.session.remove()
         with _db.engine.connect() as conn:
-            preparer = _db.engine.dialect.identifier_preparer
-            for t in _MUTABLE_TABLES_LIST:
-                qt = preparer.quote(t)
-                conn.execute(_db.text(f"ALTER TABLE {qt} NOCHECK CONSTRAINT ALL"))
-            for t in _MUTABLE_TABLES_LIST:
-                qt = preparer.quote(t)
-                conn.execute(_db.text(f"DELETE FROM {qt}"))
-            for t in _MUTABLE_TABLES_LIST:
-                qt = preparer.quote(t)
-                conn.execute(_db.text(f"ALTER TABLE {qt} CHECK CONSTRAINT ALL"))
-            conn.commit()
-        # Delete + reseed AppSettings so every column returns to its model
-        # default without the fixture having to enumerate them.
-        settings = _db.session.get(AppSettings, 1)
-        if settings is not None:
-            _db.session.delete(settings)
-            _db.session.commit()
+            try:
+                conn.exec_driver_sql(_CLEANUP_SQL)
+                conn.commit()
+            except BaseException:
+                conn.invalidate()
+                raise
         _seed_reference_data()
         _db.session.remove()
 
