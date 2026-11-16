@@ -607,7 +607,7 @@ Copy `.env.example` to `.env` for local development. Never commit `.env`.
 | `DATABASE_URL` | MSSQL connection string | `mssql+pyodbc://medcover:Dev_Password1!@db:1433/medcover_dev?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Optional. When set, the app exports OpenTelemetry traces/metrics to Azure Monitor. Unset (local, CI) means no telemetry. When `AZURE_CLIENT_ID` is also set (and `AZURE_CLIENT_SECRET` is not), ingestion authenticates with that managed identity (Entra ID) instead of the instrumentation key; the identity needs the *Monitoring Metrics Publisher* role on the Application Insights resource. The chosen auth mode is logged at startup. | supplied by the hosting environment |
 | `SCHEDULER_DB_QUERY_TIMEOUT_SECONDS` | Scheduler per-statement DB timeout; `0` disables it. The scheduled backup runs without it. | `60` (default) |
-| `SCHEDULER_WATCHDOG_TIMEOUT_MINUTES` | The scheduler exits with code 1 (so Container Apps / compose restart it) when its main loop makes no progress for this long; must exceed the longest backup run. | `30` (default) |
+| `SCHEDULER_WATCHDOG_TIMEOUT_MINUTES` | The scheduler exits with code 1 (so Container Apps / compose restart it) when its main loop makes no progress for this long; must exceed the longest backup run. `0` disables the watchdog. | `30` (default) |
 
 > **Email / SMTP:** SMTP credentials are configured through the web UI setup wizard on first run and stored Fernet-encrypted in the `app_settings` database table. No `MAIL_*` environment variables are required.
 

@@ -15,13 +15,15 @@ backup). The value is reapplied on every checkout and reset on checkin.
 
 import os
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from typing import Any
 
+import pyodbc
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
+from sqlalchemy.exc import DisconnectionError
 
 QUERY_TIMEOUT_SECONDS = 30
 
@@ -51,12 +53,24 @@ def attach_query_timeout(app: Flask, db: SQLAlchemy, seconds: int | None = None)
     # insert=True: run before the dialect's first-connect initialization queries,
     # which SQLAlchemy registers when the engine is created.
     event.listen(engine, "connect", _set_query_timeout, insert=True)
-    event.listen(engine, "checkout", _set_query_timeout)
+
+    @event.listens_for(engine, "checkout")
+    def _apply_query_timeout(dbapi_connection: Any, *_args: Any) -> None:
+        try:
+            _set_query_timeout(dbapi_connection)
+        except pyodbc.Error as exc:
+            # A pooled connection the server or driver has closed: the pool
+            # discards it and retries the checkout with a fresh connection.
+            raise DisconnectionError(str(exc)) from exc
 
     @event.listens_for(engine, "checkin")
     def _reset_query_timeout(dbapi_connection: Any, _connection_record: Any) -> None:
         # None after the connection was invalidated
-        if dbapi_connection is not None:
+        if dbapi_connection is None:
+            return
+        # Raising here would keep the connection out of the pool; a closed
+        # connection is discarded on its next checkout anyway.
+        with suppress(pyodbc.Error):
             dbapi_connection.timeout = seconds
 
 

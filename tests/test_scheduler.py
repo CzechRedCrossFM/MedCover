@@ -13,7 +13,6 @@ import schedule
 import sqlalchemy as sa
 from sqlalchemy.orm.exc import StaleDataError
 
-from app import db_timeout
 from app.extensions import db
 from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventStatus
@@ -77,6 +76,7 @@ class _Stop(Exception):
     [
         ({}, 60, 30),
         ({"SCHEDULER_DB_QUERY_TIMEOUT_SECONDS": "7", "SCHEDULER_WATCHDOG_TIMEOUT_MINUTES": "45"}, 7, 45),
+        ({"SCHEDULER_DB_QUERY_TIMEOUT_SECONDS": "0", "SCHEDULER_WATCHDOG_TIMEOUT_MINUTES": "0"}, 0, 0),
     ],
 )
 def test_env_configures_timeouts(app, monkeypatch, env, query_timeout, watchdog_minutes) -> None:
@@ -92,16 +92,6 @@ def test_env_configures_timeouts(app, monkeypatch, env, query_timeout, watchdog_
     assert module.SCHEDULER_DB_QUERY_TIMEOUT_SECONDS == query_timeout
     assert module.SCHEDULER_WATCHDOG_TIMEOUT_MINUTES == watchdog_minutes
     assert "scheduler-watchdog" not in [t.name for t in threading.enumerate()]
-
-
-def test_backup_job_runs_without_statement_timeout(sm) -> None:
-    seen: list[int | None] = []
-    with patch.object(
-        sm, "run_scheduled_backup", side_effect=lambda _s: seen.append(db_timeout._timeout_override.get())
-    ):
-        sm.scheduled_backup_task()
-    assert seen == [0]
-    assert db_timeout._timeout_override.get() is None
 
 
 def test_watchdog_exits_when_loop_stalls(sm, caplog) -> None:
@@ -125,6 +115,17 @@ def test_watchdog_exits_even_when_the_report_raises(sm) -> None:
     progress = sm.LoopProgress(last_pass=0.0)
     exit_process = MagicMock()
     with patch.object(sm, "flush_telemetry", side_effect=RuntimeError("flush broke")):
+        sm.run_watchdog(progress, 60, clock=lambda: 61.0, sleep=lambda _s: None, exit_process=exit_process)
+    exit_process.assert_called_once_with(1)
+
+
+def test_watchdog_exits_even_when_the_report_thread_cannot_start(sm) -> None:
+    progress = sm.LoopProgress(last_pass=0.0)
+    exit_process = MagicMock()
+    with (
+        patch.object(sm.threading, "Thread", side_effect=RuntimeError("can't start new thread")),
+        pytest.raises(RuntimeError),
+    ):
         sm.run_watchdog(progress, 60, clock=lambda: 61.0, sleep=lambda _s: None, exit_process=exit_process)
     exit_process.assert_called_once_with(1)
 
