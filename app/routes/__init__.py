@@ -11,7 +11,6 @@ from .debriefing import debriefing_bp
 from .equipment import equipment_bp
 from .events import events_bp
 from .feedback import feedback_bp
-from .import_events import import_bp
 from .main import main_bp
 from .master_events import master_events_bp
 from .notifications import notifications_bp
@@ -38,7 +37,6 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(reports_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(app_settings_bp)
-    app.register_blueprint(import_bp)
     app.register_blueprint(feedback_bp)
     app.register_blueprint(admin_digest_bp)
     app.register_blueprint(backup_bp)

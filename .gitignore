@@ -42,12 +42,10 @@ e2e-report/
 .env.prod
 zerver_scp.sh
 
-# Import script artefacts (may contain personal data)
+# Spreadsheet exports (may contain personal data)
 Dozory*.xlsx
 vykaz.xlsx
 *.xlsx
-!tests/fixtures/test_import.xlsx
-import_events.json
 
 # Copilot/Claude/Cave instructions (may contain personal/infra details)
 .github/copilot-instructions.md
