@@ -1,5 +1,6 @@
 import socket
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
@@ -15,7 +16,14 @@ from app.models.outbox import OutboxEmail
 from app.models.role import ALL_PERMISSIONS, ROLE_PERMISSIONS
 from app.models.settings import get_settings
 from app.models.user import UserAccount
-from app.utils import CS_COLLATION, get_or_404, last_page_redirect, page_arg, require_permission
+from app.utils import (
+    CS_COLLATION,
+    get_or_404,
+    last_page_redirect,
+    local_day_start_utc_or_none,
+    page_arg,
+    require_permission,
+)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -205,23 +213,25 @@ def audit_log_list() -> str | Response:
 
     if f_entity_type:
         query = query.where(AuditLogEntry.entity_type == f_entity_type)
-    if f_actor_id:
-        query = query.where(AuditLogEntry.actor_id == f_actor_id)
+    if f_actor_id == "system":
+        # "system" entries have no actor (actor_id IS NULL)
+        query = query.where(AuditLogEntry.actor_id.is_(None))
+    elif f_actor_id:
+        try:
+            actor_uuid = uuid.UUID(f_actor_id)
+        except ValueError:
+            f_actor_id = ""
+        else:
+            query = query.where(AuditLogEntry.actor_id == actor_uuid)
     if f_action_type:
         query = query.where(AuditLogEntry.action_type == f_action_type)
-    if f_date_from:
-        try:
-            dt_from = datetime.strptime(f_date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            query = query.where(AuditLogEntry.timestamp >= dt_from)
-        except ValueError:
-            pass
-    if f_date_to:
-        try:
-            dt_to = datetime.strptime(f_date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            # include the full day
-            query = query.where(AuditLogEntry.timestamp < dt_to + timedelta(days=1))
-        except ValueError:
-            pass
+    dt_from = local_day_start_utc_or_none(f_date_from)
+    if dt_from is not None:
+        query = query.where(AuditLogEntry.timestamp >= dt_from)
+    # the "to" day is inclusive: bound by the start of the next local day
+    dt_to = local_day_start_utc_or_none(f_date_to, next_day=True)
+    if dt_to is not None:
+        query = query.where(AuditLogEntry.timestamp < dt_to)
     if f_q:
         # Column collation (Czech_100_CI_AS_SC_UTF8) already gives us
         # case-insensitive matching, so a bare LIKE keeps the column reference

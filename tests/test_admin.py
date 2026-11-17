@@ -1,11 +1,32 @@
 """Tests for admin blueprint: dashboard, audit log."""
 
+import re
+import uuid
+from datetime import datetime, timezone
+
+import pytest
 from cryptography.fernet import Fernet
 
 from app.extensions import db
 from app.models.audit import AuditLogEntry
+from app.models.role import Role
 from app.models.settings import get_settings
 from app.utils import diff_changes
+from tests.conftest import _make_user
+
+
+def _audit(summary, *, actor_id=None, ts=None, entity_type="Event"):
+    db.session.add(
+        AuditLogEntry(
+            action_type="edit",
+            entity_type=entity_type,
+            entity_id="1",
+            summary=summary,
+            actor_id=actor_id,
+            timestamp=ts or datetime(2026, 1, 15, 12, tzinfo=timezone.utc),
+        )
+    )
+    db.session.commit()
 
 
 class TestDiffChanges:
@@ -201,3 +222,72 @@ class TestAuditLogUI:
         assert response.status_code == 200
         assert "Starý název".encode() in response.data
         assert "Nový název".encode() in response.data
+
+
+class TestAuditLogFilters:
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("actor_id=system", {"Zápis systému (akce)", "Zápis systému (nadřazená akce)"}),
+            ("actor_id=system&entity_type=Event", {"Zápis systému (akce)"}),
+            ("actor_id={actor}", {"Zápis uživatele"}),
+            ("actor_id={unknown}", set()),
+        ],
+    )
+    def test_actor_filter(self, app, admin_client, query, expected):
+        with app.app_context():
+            actor = _make_user("auditor@medcover.local", "Vymyšlený Auditor", Role.MEMBER)
+            actor_id = actor.id
+            _audit("Zápis systému (akce)", entity_type="Event")
+            _audit("Zápis systému (nadřazená akce)", entity_type="MasterEvent")
+            _audit("Zápis uživatele", actor_id=actor_id)
+
+        response = admin_client.get("/admin/audit-log/?" + query.format(actor=actor_id, unknown=uuid.uuid4()))
+        assert response.status_code == 200
+        data = response.get_data(as_text=True)
+        summaries = ("Zápis systému (akce)", "Zápis systému (nadřazená akce)", "Zápis uživatele")
+        assert {s for s in summaries if s in data} == expected
+
+    @pytest.mark.parametrize("bad", ["not-a-uuid", "SYSTEM"])
+    def test_invalid_actor_id_is_ignored_and_not_echoed(self, app, admin_client, bad):
+        with app.app_context():
+            actor = _make_user("auditor@medcover.local", "Vymyšlený Auditor", Role.MEMBER)
+            _audit("Systémový zápis")
+            _audit("Zápis uživatele", actor_id=actor.id)
+
+        response = admin_client.get(f"/admin/audit-log/?actor_id={bad}")
+        assert response.status_code == 200
+        assert "Systémový zápis".encode() in response.data
+        assert "Zápis uživatele".encode() in response.data
+        actor_select = re.search(r'<select name="actor_id".*?</select>', response.get_data(as_text=True), re.S)
+        assert actor_select is not None
+        assert "selected" not in actor_select.group(0)
+        assert "Zrušit filtry".encode() not in response.data
+
+    def test_date_filters_use_local_day_boundaries(self, app, admin_client):
+        rows = {
+            "Minutu před začátkem dne": datetime(2026, 1, 14, 22, 59, tzinfo=timezone.utc),
+            "Přesně na začátku dne": datetime(2026, 1, 14, 23, 0, tzinfo=timezone.utc),
+            "Minutu před koncem dne": datetime(2026, 1, 15, 22, 59, tzinfo=timezone.utc),
+            "Přesně na začátku dalšího dne": datetime(2026, 1, 15, 23, 0, tzinfo=timezone.utc),
+        }
+        with app.app_context():
+            for summary, ts in rows.items():
+                _audit(summary, ts=ts)
+        before_start, at_start, before_end, next_day = rows
+
+        def listed(query):
+            data = admin_client.get(f"/admin/audit-log/?{query}").get_data(as_text=True)
+            return {summary for summary in rows if summary in data}
+
+        assert listed("date_to=2026-01-15") == {before_start, at_start, before_end}
+        assert listed("date_from=2026-01-15") == {at_start, before_end, next_day}
+        assert listed("date_from=2026-01-15&date_to=2026-01-15") == {at_start, before_end}
+
+        # invalid dates are ignored and echoed back unchanged
+        response = admin_client.get("/admin/audit-log/?date_from=garbage&date_to=garbage")
+        assert response.status_code == 200
+        data = response.get_data(as_text=True)
+        assert {summary for summary in rows if summary in data} == set(rows)
+        assert data.count('value="garbage"') == 2
+        assert b"alert-danger" not in response.data

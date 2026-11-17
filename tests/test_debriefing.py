@@ -496,21 +496,21 @@ class TestDebriefingEventTypes:
 # ── /debriefing/manage pagination ─────────────────────────────────────────────
 
 
-def _make_completed_events(app, count: int, *, year: int = 2024, days_apart: int = 1) -> list[str]:
-    """Create `count` completed events and return their names ordered newest-first
+def _make_completed_events(
+    app, count: int = 0, *, year: int = 2024, days_apart: int = 1, starts: dict[str, datetime] | None = None
+) -> list[str]:
+    """Create `count` completed events (or one per `starts` name) and return their names ordered newest-first
     (the order /debriefing/manage renders them in). With `days_apart=0` every event
     starts at the same instant, so only the id tiebreaker keeps the order total."""
+    if starts is None:
+        first = datetime(year, 1, 1, 10, 0, tzinfo=timezone.utc)
+        starts = {f"Stránkovaná akce {i:03d}": first + timedelta(days=i * days_apart) for i in range(count)}
     with app.app_context():
         me = MasterEvent(name="Pagination ME")
         db.session.add(me)
         db.session.flush()
         creator = _make_user("pager_creator@test.com", "Pager Creator", Role.ADMIN)
-
-        names = []
-        for i in range(count):
-            name = f"Stránkovaná akce {i:03d}"
-            names.append(name)
-            start = datetime(year, 1, 1, 10, 0, tzinfo=timezone.utc) + timedelta(days=i * days_apart)
+        for name, start in starts.items():
             db.session.add(
                 Event(
                     name=name,
@@ -522,7 +522,7 @@ def _make_completed_events(app, count: int, *, year: int = 2024, days_apart: int
                 )
             )
         db.session.commit()
-    return list(reversed(names))
+    return list(reversed(starts))
 
 
 def _rendered_names(resp, names: list[str]) -> list[str]:
@@ -530,6 +530,38 @@ def _rendered_names(resp, names: list[str]) -> list[str]:
     html = resp.get_data(as_text=True)
     found = [(html.index(n), n) for n in names if n in html]
     return [n for _, n in sorted(found)]
+
+
+class TestDebriefingManageDateFilter:
+    def test_bounds_follow_local_midnight_and_invalid_side_is_cleared(self, app):
+        # 23:30 UTC is 00:30 the next day in Prague
+        early, late = "Testovací akce po půlnoci 15.", "Testovací akce po půlnoci 16."
+        _make_completed_events(
+            app,
+            starts={
+                early: datetime(2026, 1, 14, 23, 30, tzinfo=timezone.utc),
+                late: datetime(2026, 1, 15, 23, 30, tzinfo=timezone.utc),
+            },
+        )
+        c = _debrief_manager_client(app)
+
+        def get(query):
+            resp = c.get(f"/debriefing/manage?{query}")
+            assert resp.status_code == 200
+            return resp.get_data(as_text=True)
+
+        def listed(query):
+            return {name for name in (early, late) if name in get(query)}
+
+        assert listed("to_date=2026-01-15") == {early}
+        assert listed("from_date=2026-01-16") == {late}
+        assert listed("from_date=2026-01-15") == {early, late}
+        assert listed("to_date=2026-01-14") == set()
+
+        # an invalid side is dropped from the form while the valid side still applies
+        assert re.search(r'id="from_date"[^>]*\s+value=""', get("from_date=garbage"))
+        assert listed("from_date=2026-01-16&to_date=garbage") == {late}
+        assert re.search(r'id="to_date"[^>]*\s+value=""', get("to_date=garbage"))
 
 
 class TestDebriefingManagePagination:
