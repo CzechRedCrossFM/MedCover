@@ -6,6 +6,7 @@ import pytest
 
 from app.constants import RECORD_MODIFIED_MSG
 from app.extensions import db
+from app.models.audit import AuditLogEntry
 from app.models.equipment import (
     EquipmentItem,
     EquipmentType,
@@ -56,6 +57,24 @@ def _plan_future_event(app, type_id: int, name: str, days: float = 5) -> int:
         db.session.add(EventEquipmentPlan(event_id=event_id, equipment_type_id=type_id, quantity_required=1))
         db.session.commit()
     return event_id
+
+
+def _audits(app, item_id: int) -> list[AuditLogEntry]:
+    with app.app_context():
+        return list(
+            db.session.scalars(
+                db.select(AuditLogEntry).where(
+                    AuditLogEntry.entity_type == "EquipmentItem", AuditLogEntry.entity_id == str(item_id)
+                )
+            )
+        )
+
+
+def _assert_item_untouched(app, item_id: int, version: int) -> None:
+    with app.app_context():
+        item = db.session.get(EquipmentItem, item_id)
+        assert item.unavailability_since is None
+        assert item.version == version
 
 
 class TestEquipmentTypeList:
@@ -863,6 +882,207 @@ class TestFutureMaintenanceCancellation:
             # Item unchanged
             item = db.session.get(EquipmentItem, item_id)
             assert item.unavailability_since is None
+
+    def test_mark_available_stale_form_version(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id)
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        _set_window(app, item_id, past, None, "Oprava")
+        version = _version(app, item_id)
+        resp = admin_client.post(
+            f"/equipment/items/{item_id}/mark-available", data={"version": str(version - 1)}, follow_redirects=True
+        )
+        assert "Položka byla mezitím změněna jiným uživatelem.".encode() in resp.data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.unavailability_reason, item.version) == ("Oprava", version)
+            assert item.is_available is False
+
+    def test_mark_available_active_window(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Back Item")
+        _set_window(app, item_id, datetime.now(timezone.utc) - timedelta(hours=1), None, "Oprava")
+        version = _version(app, item_id)
+        resp = admin_client.post(
+            f"/equipment/items/{item_id}/mark-available", data={"version": str(version)}, follow_redirects=True
+        )
+        assert "Položka „Back Item“ je opět dostupná.".encode() in resp.data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.unavailability_since, item.unavailability_until, item.unavailability_reason) == (None,) * 3
+            assert item.version == version + 1
+        (entry,) = _audits(app, item_id)
+        assert entry.action_type == "edit"
+        assert "vrácena na sklad (dostupná)" in entry.summary
+
+    def test_mark_available_stale_commit(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id)
+        _set_window(app, item_id, datetime.now(timezone.utc) - timedelta(hours=1), None, "Oprava")
+        version = _version(app, item_id)
+        resp = _post_with_stale_commit(
+            admin_client, f"/equipment/items/{item_id}/mark-available", data={"version": str(version)}
+        )
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/equipment/items/"
+        assert RECORD_MODIFIED_MSG.encode() in admin_client.get(resp.headers["Location"]).data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert (item.unavailability_reason, item.version) == ("Oprava", version)
+
+
+class TestItemMarkUnavailable:
+    """POST /equipment/items/<id>/mark-unavailable."""
+
+    @staticmethod
+    def _url(item_id: int) -> str:
+        return f"/equipment/items/{item_id}/mark-unavailable"
+
+    def test_member_forbidden(self, app, member_client):
+        item_id = _make_item(app, _make_type(app))
+        version = _version(app, item_id)
+        assert member_client.post(self._url(item_id), data={"version": str(version)}).status_code == 403
+        _assert_item_untouched(app, item_id, version)
+
+    @pytest.mark.parametrize(
+        ("since", "until", "since_utc", "until_utc", "dates"),
+        [
+            (
+                "2030-01-15T00:30",
+                "2030-01-20T12:00",
+                datetime(2030, 1, 14, 23, 30),
+                datetime(2030, 1, 20, 11, 0),
+                "od 15.01.2030 do 20.01.2030",
+            ),
+            (
+                "2030-07-15T01:30",
+                "2030-07-20T12:00",
+                datetime(2030, 7, 14, 23, 30),
+                datetime(2030, 7, 20, 10, 0),
+                "od 15.07.2030 do 20.07.2030",
+            ),
+        ],
+        ids=["winter", "summer"],
+    )
+    def test_marks_window_and_audits(self, app, admin_client, since, until, since_utc, until_utc, dates):
+        item_id = _make_item(app, _make_type(app), "Window Item")
+        version = _version(app, item_id)
+        resp = admin_client.post(
+            self._url(item_id),
+            data={"version": str(version), "reason": "Revize", "since": since, "until": until},
+        )
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/equipment/items/"
+        assert (
+            "Položka „Window Item“ byla označena jako nedostupná.".encode()
+            in admin_client.get("/equipment/items/").data
+        )
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert item.unavailability_since.replace(tzinfo=None) == since_utc
+            assert item.unavailability_until.replace(tzinfo=None) == until_utc
+            assert item.unavailability_reason == "Revize"
+            assert item.version == version + 1
+        (entry,) = _audits(app, item_id)
+        assert entry.action_type == "edit"
+        assert "Window Item" in entry.summary
+        assert dates in entry.summary
+        assert "Revize" in entry.summary
+
+    def test_defaults_to_now_indefinite(self, app, admin_client):
+        item_id = _make_item(app, _make_type(app), "Default Item")
+        version = _version(app, item_id)
+        admin_client.post(self._url(item_id), data={"version": str(version)})
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            assert abs(item.unavailability_since.replace(tzinfo=None) - now) < timedelta(seconds=60)
+            assert item.unavailability_until is None
+            assert item.unavailability_reason is None
+            assert item.is_available is False
+        (entry,) = _audits(app, item_id)
+        assert "do neurčito" in entry.summary
+        assert entry.summary.endswith(": —")
+
+    def test_stale_form_version(self, app, admin_client):
+        item_id = _make_item(app, _make_type(app))
+        version = _version(app, item_id)
+        resp = admin_client.post(self._url(item_id), data={"version": str(version - 1)}, follow_redirects=True)
+        assert "Položka byla mezitím změněna jiným uživatelem.".encode() in resp.data
+        _assert_item_untouched(app, item_id, version)
+
+    def test_already_unavailable(self, app, admin_client):
+        item_id = _make_item(app, _make_type(app))
+        since = datetime.now(timezone.utc) - timedelta(hours=1)
+        until = datetime.now(timezone.utc) + timedelta(days=1)
+        _set_window(app, item_id, since, until, "Původní")
+        version = _version(app, item_id)
+        resp = admin_client.post(
+            self._url(item_id), data={"version": str(version), "reason": "Nový"}, follow_redirects=True
+        )
+        assert "Položka je již označena jako nedostupná.".encode() in resp.data
+        with app.app_context():
+            item = db.session.get(EquipmentItem, item_id)
+            assert item.unavailability_since.replace(tzinfo=None) == since.replace(tzinfo=None)
+            assert item.unavailability_until.replace(tzinfo=None) == until.replace(tzinfo=None)
+            assert (item.unavailability_reason, item.version) == ("Původní", version)
+
+    @pytest.mark.parametrize(
+        "window",
+        [{"since": "not-a-date"}, {"until": "2030-13-45T99:99"}],
+        ids=["bad_since", "bad_until"],
+    )
+    def test_invalid_dates(self, app, admin_client, window):
+        item_id = _make_item(app, _make_type(app))
+        version = _version(app, item_id)
+        resp = admin_client.post(self._url(item_id), data={"version": str(version), **window}, follow_redirects=True)
+        assert "Neplatný formát data servisního okna.".encode() in resp.data
+        _assert_item_untouched(app, item_id, version)
+
+    @pytest.mark.parametrize("until", ["2030-03-01T10:00", "2030-02-01T10:00"], ids=["equal", "earlier"])
+    def test_until_not_after_since(self, app, admin_client, until):
+        item_id = _make_item(app, _make_type(app))
+        version = _version(app, item_id)
+        resp = admin_client.post(
+            self._url(item_id),
+            data={"version": str(version), "since": "2030-03-01T10:00", "until": until},
+            follow_redirects=True,
+        )
+        assert "Konec servisního okna musí být po jeho začátku.".encode() in resp.data
+        _assert_item_untouched(app, item_id, version)
+
+    def test_new_shortage_warns(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id)
+        _plan_future_event(app, type_id, "Short Event")
+        resp = admin_client.post(
+            self._url(item_id), data={"version": str(_version(app, item_id))}, follow_redirects=True
+        )
+        body = resp.data.decode()
+        assert "Upozornění: servisní okno způsobí nedostatek vybavení pro 1 akci/akce/akcí:" in body
+        assert "Short Event" in body
+
+    def test_preexisting_shortage_not_rewarned(self, app, admin_client):
+        type_id = _make_type(app)
+        item_id = _make_item(app, type_id, "Pre Item")
+        _plan_future_event(app, type_id, "Short Event")
+        _set_window(app, item_id, datetime.now(timezone.utc) + timedelta(days=4))
+        resp = admin_client.post(
+            self._url(item_id), data={"version": str(_version(app, item_id))}, follow_redirects=True
+        )
+        body = resp.data.decode()
+        assert "Položka „Pre Item“ byla označena jako nedostupná." in body
+        assert "Upozornění" not in body
+
+    def test_stale_commit_rolls_back(self, app, admin_client):
+        item_id = _make_item(app, _make_type(app))
+        version = _version(app, item_id)
+        resp = _post_with_stale_commit(admin_client, self._url(item_id), data={"version": str(version)})
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/equipment/items/"
+        assert RECORD_MODIFIED_MSG.encode() in admin_client.get(resp.headers["Location"]).data
+        _assert_item_untouched(app, item_id, version)
+        assert _audits(app, item_id) == []
 
 
 # ── Type-level availability check ─────────────────────────────────────────────
