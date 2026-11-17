@@ -8,8 +8,10 @@ from io import BytesIO
 from zoneinfo import ZoneInfo
 
 import pytest
+import sqlalchemy as sa
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
 
+from app import db_timeout
 from app.backup import _container, downloaded_backup, export_to_zip, list_backups, prune_old_backups, restore_from_zip
 from app.extensions import db as _db
 from app.models.audit import AuditLogEntry
@@ -1049,6 +1051,37 @@ class TestScheduledBackupFailureHandling:
             errors = _db.session.query(AuditLogEntry).filter_by(entity_type="Backup", action_type="error").all()
             assert len(errors) == 2
             assert all(e.summary for e in errors)
+
+    def test_day_is_stamped_before_the_export_runs_without_statement_timeout(self, app, monkeypatch):
+        """A run killed mid-export (watchdog, restart) must not re-export after every restart."""
+        with app.app_context():
+            settings = get_settings()
+            settings.backup_schedule_enabled = True
+            settings.backup_schedule_hour = 2
+            settings.backup_schedule_minute = 0
+            settings.backup_last_scheduled_run_date = None
+            _db.session.commit()
+
+            seen = []
+
+            def killed_export(*args, **kwargs):
+                with _db.engine.connect() as connection:  # separate connection: committed state only
+                    stamped = connection.execute(
+                        sa.text("SELECT backup_last_scheduled_run_date FROM app_settings WHERE id = 1")
+                    ).scalar_one()
+                seen.append((stamped, db_timeout._timeout_override.get()))
+                raise KeyboardInterrupt  # not caught by the task, like a killed process
+
+            monkeypatch.setattr("app.scheduler_tasks.export_to_zip", killed_export)
+            with pytest.raises(KeyboardInterrupt):
+                run_scheduled_backup(_db.session, now=datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc))
+            _db.session.rollback()
+
+            assert seen == [(date(2026, 1, 1), 0)]
+            assert db_timeout._timeout_override.get() is None
+            # After the "restart", the day counts as attempted.
+            assert run_scheduled_backup(_db.session, now=datetime(2026, 1, 1, 1, 1, tzinfo=timezone.utc)) is False
+            assert len(seen) == 1
 
     def test_upload_failure_is_recorded_as_failed_backup(self, app, monkeypatch):
         """A storage error during upload goes through the normal failure path."""

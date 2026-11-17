@@ -3,6 +3,7 @@ import os
 import secrets
 import socket
 import sys
+import threading
 import time as _time
 from datetime import datetime, timedelta, timezone
 from itertools import groupby as itertools_groupby
@@ -100,10 +101,38 @@ def configure_telemetry() -> bool:
     return True
 
 
+def flush_telemetry(timeout_millis: int = 5000) -> None:
+    """Export buffered logs, waiting at most ``timeout_millis``; no-op unless telemetry was started.
+
+    The logging handler's own ``flush()`` returns before the export finishes, which
+    is not enough before ``os._exit``. The SDK's ``force_flush`` ignores its timeout
+    argument, so it runs in a daemon thread that is abandoned when the wait expires.
+    """
+    if not _telemetry_configured:
+        return
+    # Lazy for the same reason as in configure_telemetry: optional telemetry dependency.
+    from opentelemetry._logs import get_logger_provider  # pylint: disable=import-outside-toplevel
+
+    force_flush = getattr(get_logger_provider(), "force_flush", None)
+    if not force_flush:
+        return
+
+    def _flush() -> None:
+        try:
+            force_flush(timeout_millis)
+        except Exception:
+            logging.getLogger(__name__).exception("Telemetry flush failed")
+
+    flusher = threading.Thread(target=_flush, name="telemetry-flush", daemon=True)
+    flusher.start()
+    flusher.join(timeout_millis / 1000)
+
+
 def create_app(
     config_name: str | None = None,
     db_url: str | None = None,
     engine_options: dict | None = None,
+    query_timeout: int | None = None,
 ) -> Flask:
     if config_name is None:
         config_name = os.getenv("FLASK_ENV", "development")
@@ -139,7 +168,8 @@ def create_app(
     csrf.init_app(app)
 
     attach_msi_token_auth(app, db)
-    attach_query_timeout(app, db)
+    # None: 30 s under gunicorn only; the scheduler passes its own limit
+    attach_query_timeout(app, db, seconds=query_timeout)
 
     # Import only after db.init_app so Flask-Migrate sees the complete model registry.
     with app.app_context():

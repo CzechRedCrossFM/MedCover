@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 
 from app import create_app, db_timeout
-from app.db_timeout import attach_query_timeout
+from app.db_timeout import attach_query_timeout, query_timeout_override
 from app.extensions import db
 
 GUNICORN_SOFTWARE = "gunicorn/99.0"
@@ -106,20 +106,57 @@ def _connect_listener_names(engine: Engine) -> list[str]:
     return [getattr(fn, "__name__", "") for fn in engine.pool.dispatch.connect]
 
 
-@pytest.mark.parametrize(("server_software", "installed"), [(None, False), (GUNICORN_SOFTWARE, True)])
-def test_create_app_attaches_timeout_only_under_gunicorn(
-    app: Flask, monkeypatch: pytest.MonkeyPatch, server_software: str | None, installed: bool
+@pytest.mark.parametrize(
+    ("server_software", "query_timeout", "expected"),
+    [(None, None, 0), (GUNICORN_SOFTWARE, None, 30), (None, 7, 7), (None, 0, 0)],
+)
+def test_create_app_query_timeout(
+    app: Flask, monkeypatch: pytest.MonkeyPatch, server_software: str | None, query_timeout: int | None, expected: int
 ) -> None:
     if server_software is None:
         monkeypatch.delenv("SERVER_SOFTWARE", raising=False)
     else:
         monkeypatch.setenv("SERVER_SOFTWARE", server_software)
-    flask_app = create_app("testing", db_url=app.config["SQLALCHEMY_DATABASE_URI"])
+    flask_app = create_app("testing", db_url=app.config["SQLALCHEMY_DATABASE_URI"], query_timeout=query_timeout)
     with flask_app.app_context():
-        names = _connect_listener_names(db.engine)
-        db.engine.dispose()
-    assert (names[:1] == ["_set_query_timeout"]) is installed
-    assert names.count("_set_query_timeout") == (1 if installed else 0)
+        try:
+            names = _connect_listener_names(db.engine)
+            assert (names[:1] == ["_set_query_timeout"]) is bool(expected)
+            assert names.count("_set_query_timeout") == (1 if expected else 0)
+            with db.engine.connect() as connection:
+                assert connection.connection.dbapi_connection.timeout == expected
+        finally:
+            db.engine.dispose()
+
+
+def test_override_lifts_timeout_and_is_restored(timeout_app: tuple[Flask, SQLAlchemy]) -> None:
+    _, sa = timeout_app
+    with pytest.raises(RuntimeError), query_timeout_override(0):
+        sa.session.execute(text("WAITFOR DELAY '00:00:01.500'"))
+        sa.session.commit()
+        # re-checkout after the commit keeps the override
+        assert _dbapi_timeout(sa) == 0
+        raise RuntimeError("job failed")
+    sa.session.remove()
+    # before any checkout reapplies the value: only the checkin reset can have restored it
+    assert sa.engine.pool.checkedin() == 1
+    pooled = sa.engine.pool._pool.queue[0].dbapi_connection
+    assert pooled.timeout == 1
+    assert _dbapi_timeout(sa) == 1
+
+
+def test_closed_pooled_connection_is_replaced_on_checkout(timeout_app: tuple[Flask, SQLAlchemy]) -> None:
+    _, sa = timeout_app
+    assert _dbapi_timeout(sa) == 1
+    sa.session.remove()
+    pooled = sa.engine.pool._pool.queue[0].dbapi_connection
+    pooled.close()  # closed underneath the pool, e.g. by the driver after a network drop
+    # Checkin must not raise either, or the connection would never return to the pool.
+    for listener in sa.engine.pool.dispatch.checkin:
+        listener(pooled, None)
+
+    assert _dbapi_timeout(sa) == 1
+    assert sa.session.connection().connection.dbapi_connection is not pooled
 
 
 PROBE_APP = """\

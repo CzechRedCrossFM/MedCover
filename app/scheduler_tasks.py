@@ -16,6 +16,7 @@ from azure.core.exceptions import AzureError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.backup import export_to_zip, prune_old_backups
+from app.db_timeout import query_timeout_override
 from app.digest.renderer import render_digest
 from app.external_collaborators import external_can_participate, external_opportunities
 from app.mail import send_admin_digest, send_external_opportunity, send_unfilled_spots_reminder
@@ -291,8 +292,9 @@ def run_scheduled_backup(db_session: Any, now: datetime | None = None) -> bool:
          than skipping the whole day.
       3. The scheduled trigger hasn't already been attempted today (tracked
          via AppSettings.backup_last_scheduled_run_date, in the app timezone).
-         A failed attempt counts: the date is stamped either way, so a broken
-         backup target produces one error per day, not one per minute.
+         The date is stamped before the export starts, so a failed or killed
+         attempt counts too: a broken backup target produces one error per
+         day, not one per minute or one full export per restart.
          Ad-hoc admin-triggered backups do NOT touch that field and do NOT
          suppress the scheduled run — the daily cap applies to scheduled runs
          only. Extra ad-hoc backups count against ``backup_keep_count`` and
@@ -337,8 +339,18 @@ def run_scheduled_backup(db_session: Any, now: datetime | None = None) -> bool:
         log.debug("Scheduled backup: already ran today (%s), skipping.", today_local.isoformat())
         return False
 
+    # Stamp the day before exporting. A run killed mid-export (the scheduler
+    # watchdog, a container restart) then counts as today's attempt, like a
+    # failed one, instead of starting a fresh full export after every restart.
+    # The commit also releases the connection, so the export checks out a new
+    # one under the override below.
+    settings.backup_last_scheduled_run_date = today_local
+    db_session.commit()
+
     try:
-        name = export_to_zip(now=now)
+        # Full-table reads may legitimately exceed the scheduler's per-statement limit.
+        with query_timeout_override(0):
+            name = export_to_zip(now=now)
     except Exception as exc:
         return _record_failed_scheduled_backup(db_session, exc, today_local)
 
@@ -355,7 +367,6 @@ def run_scheduled_backup(db_session: Any, now: datetime | None = None) -> bool:
     try:
         log.info("Scheduled backup created: %s (pruned %d old backups)", name, len(pruned))
 
-        settings.backup_last_scheduled_run_date = today_local
         db_session.add(
             AuditLogEntry(
                 actor_id=None,

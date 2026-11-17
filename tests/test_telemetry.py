@@ -3,10 +3,12 @@
 import logging
 import os
 import sys
+import threading
+import time
 import types
 
 import app as app_package
-from app import configure_telemetry
+from app import configure_telemetry, flush_telemetry
 
 ENV_VAR = "APPLICATIONINSIGHTS_CONNECTION_STRING"
 SDK_LOGGERS = (
@@ -166,3 +168,53 @@ def test_missing_identity_package_disables_telemetry(monkeypatch, caplog):
         assert configure_telemetry() is False
     assert calls == []
     assert "telemetry dependencies" in caplog.text
+
+
+def _install_fake_provider(monkeypatch, flushed: list, force_flush=None) -> None:
+    if force_flush is None:
+
+        def force_flush(timeout_millis):
+            flushed.append(timeout_millis)
+
+    provider = types.SimpleNamespace(force_flush=force_flush)
+    logs = types.ModuleType("opentelemetry._logs")
+    logs.get_logger_provider = lambda: provider  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "opentelemetry", types.ModuleType("opentelemetry"))
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", logs)
+
+
+def test_flush_telemetry_flushes_provider_when_configured(monkeypatch):
+    flushed: list = []
+
+    def slow_flush(timeout_millis):
+        time.sleep(0.05)
+        flushed.append(timeout_millis)
+
+    _install_fake_provider(monkeypatch, flushed, slow_flush)
+    monkeypatch.setattr(app_package, "_telemetry_configured", True)
+
+    flush_telemetry(1234)
+    assert flushed == [1234]
+
+
+def test_flush_telemetry_stops_waiting_for_a_blocked_flush(monkeypatch):
+    release = threading.Event()
+    _install_fake_provider(monkeypatch, [], lambda timeout_millis: release.wait(5))
+    monkeypatch.setattr(app_package, "_telemetry_configured", True)
+
+    started = time.monotonic()
+    try:
+        flush_telemetry(50)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+    assert elapsed < 2
+
+
+def test_flush_telemetry_is_a_noop_when_not_configured(monkeypatch):
+    flushed: list = []
+    _install_fake_provider(monkeypatch, flushed)
+    monkeypatch.setattr(app_package, "_telemetry_configured", False)
+
+    flush_telemetry()
+    assert flushed == []
