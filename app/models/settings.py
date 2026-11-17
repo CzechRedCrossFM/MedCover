@@ -41,8 +41,8 @@ class AppSettings(db.Model):  # type: ignore[misc]
 
     # --- Dev / testing ---
     # When True, outgoing emails are silently suppressed unless the recipient is
-    # listed in dev_email_allowlist.  Useful on staging/dev instances where real
-    # user addresses were imported and must never receive notifications.
+    # listed in dev_email_allowlist.  Useful on staging/dev instances that hold real user
+    # addresses (e.g. a copy of production data) which must never receive notifications.
     dev_email_block = db.Column(db.Boolean, default=False, nullable=False, server_default="false")
     # Comma-separated list of email addresses that bypass the dev_email_block.
     # Example: "admin@example.com, tester@example.com"
