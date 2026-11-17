@@ -279,16 +279,10 @@ tr.table-warning {
 .font-85  { font-size: 0.85rem; }
 
 /* Column / element widths — pixel */
-.col-60   { width:  60px; }
 .col-80   { width:  80px; }
-.col-90   { width:  90px; }
-.col-100  { width: 100px; }
-.col-110  { width: 110px; }
-.col-130  { width: 130px; }
 
 /* Column / element widths — relative */
 .col-2r    { width:  2rem; }
-.col-2p5r  { width:  2.5rem; }
 .col-13e   { width:  13em; }
 .col-14r   { width:  14rem; }
 .col-375p  { width:  37.5%; }
@@ -299,13 +293,7 @@ tr.table-warning {
 .minw-9r   { min-width:   9rem; }
 .minw-12r  { min-width:  12rem; }
 .minw-110  { min-width: 110px; }
-.minw-120  { min-width: 120px; }
-.minw-140  { min-width: 140px; }
-.minw-160  { min-width: 160px; }
-.minw-180  { min-width: 180px; }
-.minw-200  { min-width: 200px; }
 .minw-260  { min-width: 260px; }
-.minw-1200 { min-width: 1200px; }
 
 /* Max-width utilities */
 .maxw-80   { max-width:  80px; }
@@ -425,13 +413,6 @@ tr.table-warning {
 .fc-event-cancelled { opacity: 0.55; }
 .fc-event-cancelled .fc-list-event-title a,
 .fc-event-cancelled .fc-event-title { text-decoration: line-through; color: #6c757d; }
-
-/* ── Import preview page ──────────────────────────────────────────────────── */
-.import-table th, .import-table td { vertical-align: middle; }
-.import-table input[type="text"], .import-table select { font-size: .85rem; }
-.warn-badge { font-size: .75rem; }
-.row-excluded { opacity: .45; }
-.import-scroll { overflow-x: auto; } /* keeps table scrollable on small screens */
 
 /* ── Table Manager ───────────────────────────────────────────────────────────────────── */
 /* Cells that carry an event/qual pastel colour — the concrete

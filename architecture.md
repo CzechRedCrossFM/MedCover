@@ -41,7 +41,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
 | Divák | Viewer | Read-only access |
 | Vedoucí debriefingu | Debriefing Manager | Exclusive access to confidential debriefing records |
 | Zodpovědná osoba (ZO) | Responsible Person (RP) / `responsible_person` | The person leading an event on site; field: `Event.responsible_person_id` |
-| Zelenáč | Trainee | Informal Czech term for a junior/trainee-level qualification used in the event import logic |
+| Zelenáč | Trainee | Informal Czech term for a junior/trainee-level qualification |
 
 ### Event Status (`EventStatus` enum)
 
@@ -594,7 +594,8 @@ When in doubt about the correct Czech UI label or English code name for a concep
         - The scheduler's main loop sleep was reduced from 30 s to 5 s, then to 1 s, so that `schedule.run_pending()` polls often enough to honor `MAIL_QUEUE_INTERVAL_SECONDS` (and any other `schedule.every(...)` interval shorter than the old 5 s poll rate). The heartbeat DB write / file touch is throttled independently (`HEARTBEAT_INTERVAL_SECONDS`, still ~5 s) so the faster poll loop doesn't multiply DB writes.
         - Admin can preview the deferred pipeline end-to-end via the test-notification form at `/admin/notifications/`: the "Odeslat okamžitě" checkbox (default OFF) enqueues the notification through the normal deferred path; when checked, it bypasses the delay for template preview.
 
-- AD16 Google Sheets Event Import Strategy
+- AD16 Google Sheets Event Import Strategy (removed)
+    - **Status:** Removed — the import page and script were removed once the migration from Google Sheets was complete (#698, `feat(import)!: remove the Google Sheets event import`). The text below is kept as history; the bulk lifecycle actions remain in use.
     - **Context:** The app replaces an existing Google Sheets ("Dozory") workflow. At launch, ~130 future events must be migrated without manual re-entry. A one-off migration path is needed; the GS sheet continues to be used as the booking source until all coordinators move to MedCover natively.
     - **Options considered:**
         - **Google Sheets API** — no download step, but requires OAuth credentials, API quota management, and a persistent integration that would be dead weight after migration.
@@ -604,7 +605,7 @@ When in doubt about the correct Czech UI label or English code name for a concep
         1. Admin downloads the sheet as `.xlsx` and runs `scripts/import_events.py` locally (requires `pip install openpyxl`). The script filters past events, maps GS columns to the MedCover JSON interchange format, and auto-appends dates to disambiguate duplicate names.
         2. Admin pastes the JSON into `/import/events/` (admin-only, `event.create` permission). The web app validates each row, fuzzy-matches responsible-person names against DB users, flags duplicates (same name + date already in DB), and renders an editable preview table.
         3. Admin reviews and confirms. All events are created in a **single all-or-nothing transaction** as `DRAFT`. 3 spots per event (1 mandatory Zdravotník, 1 mandatory Zelenáč, 1 optional Zelenáč) unless start time was missing.
-    - **Bulk lifecycle actions (companion feature):** A `POST /events/bulk` route enables multi-select in the events list and batch status transitions (Zveřejnit, Otevřít přihlášky, Zrušit). Bulk actions intentionally skip email notifications to prevent notification storms when publishing a large import batch. Individual status changes via the event detail page still send emails.
+    - **Bulk lifecycle actions (companion feature, still in use):** A `POST /events/bulk` route enables multi-select in the events list and batch status transitions (Zveřejnit, Otevřít přihlášky, Zrušit). Bulk actions intentionally skip email notifications to prevent notification storms when publishing a large import batch. Individual status changes via the event detail page still send emails.
     - **Column mapping (GS → MedCover):**
         - A (name), B (date), C (location), G (start_time), H (end_time), K (paid), M (responsible_person) → dedicated fields
         - D (vehicle/tent), E (event type), F (organiser contact), N+ (pre-import signups) → stored as text in `description`

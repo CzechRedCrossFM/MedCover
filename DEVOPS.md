@@ -57,7 +57,6 @@ MedCover/
 │   │   ├── templates.py        # Event template CRUD
 │   │   ├── qualifications.py   # Qualification (credential type) CRUD
 │   │   ├── equipment.py        # Equipment types, items, issuance, event plans
-│   │   ├── import_events.py    # Bulk event import from paste
 │   │   ├── reports.py          # Reports (staffing, statistics, glossary)
 │   │   ├── debriefing.py       # Post-event debriefing forms
 │   │   ├── work_report.py      # Výkaz práce (monthly work-report XLSX)
@@ -94,7 +93,6 @@ MedCover/
 │   ├── test_admin.py
 │   ├── test_admin_digest.py
 │   ├── test_debriefing.py
-│   ├── test_import_events.py
 │   ├── test_master_events.py
 │   ├── test_qualifications.py
 │   ├── test_reports.py
