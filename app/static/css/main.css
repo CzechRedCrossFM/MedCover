@@ -426,13 +426,6 @@ tr.table-warning {
 .fc-event-cancelled .fc-list-event-title a,
 .fc-event-cancelled .fc-event-title { text-decoration: line-through; color: #6c757d; }
 
-/* ── Import preview page ──────────────────────────────────────────────────── */
-.import-table th, .import-table td { vertical-align: middle; }
-.import-table input[type="text"], .import-table select { font-size: .85rem; }
-.warn-badge { font-size: .75rem; }
-.row-excluded { opacity: .45; }
-.import-scroll { overflow-x: auto; } /* keeps table scrollable on small screens */
-
 /* ── Table Manager ───────────────────────────────────────────────────────────────────── */
 /* Cells that carry an event/qual pastel colour — the concrete
    background-color is applied by table-manager.js from data-tm-bg attributes,

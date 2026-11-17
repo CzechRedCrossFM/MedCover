@@ -135,7 +135,10 @@ Legend: ✅ Done · 🔲 To do · ⏳ In progress
 
 ## Phase 6 — Import & Bulk Operations ✅
 
-### Google Sheets Event Import
+### Google Sheets Event Import — removed
+
+> Removed once the migration from Google Sheets was complete; the items below are kept as history.
+
 - ✅ Extraction script `scripts/import_events.py` — reads `.xlsx` export, filters past events, maps GS columns, disambiguates duplicate names by appending date, outputs JSON
 - ✅ Script documentation `scripts/README_import.md` — step-by-step usage guide, column mapping table, format reference
 - ✅ Admin-only import page `/import/events/` — paste JSON, step-by-step instructions, help popovers
