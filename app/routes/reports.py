@@ -50,7 +50,7 @@ from app.models.master_event import MasterEvent
 from app.models.user import UserAccount
 from app.printout_generator import generate_printout
 from app.queries import active_master_events_list, active_users_list
-from app.utils import czech_sort_key, get_app_tz, quick_date_ranges, require_permission
+from app.utils import czech_sort_key, get_app_tz, local_day_start_utc, quick_date_ranges, require_permission
 from app.xlsx import HOURS_FORMAT, Column, TableSheet, build_workbook
 
 reports_bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -361,11 +361,10 @@ def user_report(user_id: uuid.UUID) -> str | Response:
 
     if from_date_str or to_date_str:
         try:
-            tz = get_app_tz()
             if from_date_str:
-                from_dt = datetime.strptime(from_date_str, "%Y-%m-%d").replace(tzinfo=tz)
+                from_dt = local_day_start_utc(from_date_str)
             if to_date_str:
-                to_dt = datetime.strptime(to_date_str, "%Y-%m-%d").replace(tzinfo=tz) + timedelta(days=1)
+                to_dt = local_day_start_utc(to_date_str, next_day=True)
         except ValueError:
             date_error = "Neplatný formát data."
             from_date_str = ""

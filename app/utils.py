@@ -44,6 +44,33 @@ def get_app_tz() -> ZoneInfo:
     return ZoneInfo(_DEFAULT_TZ)
 
 
+def local_day_start_utc(value: str, *, next_day: bool = False) -> datetime:
+    """Start of the app-local day ``value`` (``YYYY-MM-DD``) as a UTC-aware datetime.
+
+    ``next_day=True`` gives the start of the following local day: the exclusive
+    upper bound for an inclusive "to" date. The day is added to the calendar
+    date before the zone is attached, so DST days span 23 or 25 hours.
+    Raises ValueError for a malformed or out-of-range date.
+    """
+    try:
+        day = datetime.strptime(value, "%Y-%m-%d").date()
+        if next_day:
+            day += timedelta(days=1)
+        return datetime(day.year, day.month, day.day, tzinfo=get_app_tz()).astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError(f"Date out of range: {value}") from exc
+
+
+def local_day_start_utc_or_none(value: str, *, next_day: bool = False) -> datetime | None:
+    """Like local_day_start_utc, but None for a blank or invalid ``value``."""
+    if not value:
+        return None
+    try:
+        return local_day_start_utc(value, next_day=next_day)
+    except ValueError:
+        return None
+
+
 # ── Czech date/number formatting ─────────────────────────────────────────────
 
 CZECH_DAY_ABBR = ["po", "út", "st", "čt", "pá", "so", "ne"]

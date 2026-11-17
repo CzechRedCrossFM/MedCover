@@ -15,7 +15,7 @@ Routes:
   GET      /debriefing/manage           — list all records (Debriefing Manager)
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -30,6 +30,7 @@ from app.utils import (
     get_app_tz,
     get_or_404,
     last_page_redirect,
+    local_day_start_utc_or_none,
     page_arg,
     quick_date_ranges,
     require_permission,
@@ -262,19 +263,17 @@ def manage() -> str | Response:
         )
     )
 
-    if from_date_str:
-        try:
-            from_dt = datetime.strptime(from_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            query = query.where(Event.start_datetime >= from_dt)
-        except ValueError:
-            from_date_str = ""
+    from_dt = local_day_start_utc_or_none(from_date_str)
+    if from_dt is None:
+        from_date_str = ""
+    else:
+        query = query.where(Event.start_datetime >= from_dt)
 
-    if to_date_str:
-        try:
-            to_dt = datetime.strptime(to_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
-            query = query.where(Event.start_datetime < to_dt)
-        except ValueError:
-            to_date_str = ""
+    to_dt = local_day_start_utc_or_none(to_date_str, next_day=True)
+    if to_dt is None:
+        to_date_str = ""
+    else:
+        query = query.where(Event.start_datetime < to_dt)
 
     pagination = db.paginate(query, page=page_arg(), per_page=PER_PAGE, error_out=False)
     if redirect_resp := last_page_redirect(pagination.page, pagination.pages):
