@@ -14,7 +14,7 @@ from app.models.event import Event, EventStatus
 from app.models.feedback import UserFeedback
 from app.models.outbox import OutboxEmail
 from app.models.role import ALL_PERMISSIONS, ROLE_PERMISSIONS
-from app.models.settings import get_settings
+from app.models.settings import AppSettings, get_settings
 from app.models.user import UserAccount
 from app.utils import (
     CS_COLLATION,
@@ -43,12 +43,17 @@ def _check_db_health() -> dict:
         status = "warning" if ms > _DB_WARN_MS else "ok"
         return {"status": status, "ms": ms, "error": None}
     except Exception as exc:
+        try:
+            db.session.rollback()
+        except Exception:
+            # a dead connection can fail the rollback too; the probe error is what we report
+            pass
         return {"status": "error", "ms": None, "error": type(exc).__name__}
 
 
-def _check_scheduler(settings: object, now: datetime) -> dict:
+def _check_scheduler(settings: AppSettings, now: datetime) -> dict:
     """Check scheduler heartbeat and return {status, last, age_s}."""
-    sched_last = settings.scheduler_last_seen  # type: ignore[attr-defined]
+    sched_last = settings.scheduler_last_seen
     if sched_last is None:
         return {"status": "unknown", "last": None, "age_s": None}
     age_s = int((now - sched_last).total_seconds())
@@ -61,15 +66,13 @@ def _check_scheduler(settings: object, now: datetime) -> dict:
     return {"status": status, "last": sched_last, "age_s": age_s}
 
 
-def _check_smtp(settings: object) -> dict:
+def _check_smtp(settings: AppSettings) -> dict:
     """Probe SMTP and return {configured, status, ms, error}."""
-    if not settings.smtp_configured:  # type: ignore[attr-defined]
+    if not settings.smtp_configured:
         return {"configured": False, "status": "unconfigured", "ms": None, "error": None}
     try:
         t0 = time.monotonic()
-        with socket.create_connection(  # type: ignore[attr-defined]
-            (settings.smtp_server, settings.smtp_port), timeout=3
-        ):
+        with socket.create_connection((settings.smtp_server, settings.smtp_port), timeout=3):
             pass
         ms = int((time.monotonic() - t0) * 1000)
         status = "warning" if ms > _SMTP_WARN_MS else "ok"
@@ -80,7 +83,7 @@ def _check_smtp(settings: object) -> dict:
             "status": "error",
             "ms": None,
             "error": f"Spojení na {settings.smtp_server}:{settings.smtp_port} vypršelo (timeout 3 s)",
-        }  # type: ignore[attr-defined]
+        }
     except OSError as exc:
         return {"configured": True, "status": "error", "ms": None, "error": str(exc)}
 
@@ -184,7 +187,7 @@ def index() -> str:
 def permissions() -> str:
     require_permission("admin.view")
 
-    role_names = list(ROLE_PERMISSIONS.keys())  # Admin, Coordinator, Member, Viewer
+    role_names = list(ROLE_PERMISSIONS.keys())
     return render_template(
         "admin/permissions.html",
         all_permissions=ALL_PERMISSIONS,

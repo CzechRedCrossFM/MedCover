@@ -11,6 +11,7 @@ from app.extensions import db
 from app.models.audit import AuditLogEntry
 from app.models.role import Role
 from app.models.settings import get_settings
+from app.routes.admin import _check_db_health
 from app.utils import diff_changes
 from tests.conftest import _make_user
 
@@ -291,3 +292,29 @@ class TestAuditLogFilters:
         assert {summary for summary in rows if summary in data} == set(rows)
         assert data.count('value="garbage"') == 2
         assert b"alert-danger" not in response.data
+
+
+class TestDbHealthCheck:
+    def test_failed_probe_rolls_back_and_leaves_session_usable(self, app):
+        with app.app_context():
+            db.session.execute(db.text("SELECT 1"))
+            db.session.connection().invalidate()
+
+            result = _check_db_health()
+
+            assert result["status"] == "error"
+            assert result["ms"] is None
+            assert db.session.execute(db.text("SELECT 1")).scalar() == 1
+
+    def test_rollback_failure_is_swallowed(self, app, monkeypatch):
+        def fail_probe(*args, **kwargs):
+            raise RuntimeError("probe failed")
+
+        def fail_rollback():
+            raise OSError("rollback failed")
+
+        with app.app_context():
+            monkeypatch.setattr(db.session, "execute", fail_probe)
+            monkeypatch.setattr(db.session, "rollback", fail_rollback)
+
+            assert _check_db_health()["error"] == "RuntimeError"
