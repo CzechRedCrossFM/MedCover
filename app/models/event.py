@@ -315,7 +315,7 @@ class Event(ReminderScheduleMixin, db.Model):  # type: ignore[misc]
 
         This is NOT the auto-close trigger. Assignments only auto-close once every spot
         (mandatory + optional) is filled. See ``auto_close_if_full`` (used by the
-        assignments and import routes).
+        assignment and event-transition routes).
         """
         if self.staffing_mode == StaffingMode.CONDITIONS:
             return self.staffing_summary.is_staffing_sufficient

@@ -22,14 +22,14 @@ tests/
 coverage.json
 htmlcov/
 
-# Scripts (seed, import — not needed at runtime)
+# Scripts (seed — not needed at runtime)
 scripts/
 
 # Documentation
 *.md
 LICENSE
 
-# Sample / import data files
+# Sample data files
 *.xlsx
 *.json
 
