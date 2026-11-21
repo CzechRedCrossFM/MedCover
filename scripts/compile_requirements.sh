@@ -26,6 +26,7 @@ echo "==> Pulling ${IMAGE} ..."
 echo "==> Compiling all requirements files ..."
 "$DOCKER" run --rm \
   --platform linux/amd64 \
+  -e UV_EXCLUDE_NEWER="7 days" \
   -v "${REPO_ROOT}:/app" \
   -w /app \
   "$IMAGE" \

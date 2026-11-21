@@ -586,7 +586,7 @@ Dependencies are compiled with **uv pip compile** (`.in` → `.txt` compilation 
    ```bash
    ./scripts/compile_requirements.sh
    ```
-   This uses Podman (or Docker) to compile inside a `python:3.14-slim` Linux/amd64 container. Production and E2E compile in parallel; dev and telemetry compile in parallel after production finishes. The cache is discarded when the container exits.
+   This uses Podman (or Docker) to compile inside a `python:3.14-slim` Linux/amd64 container. All four compilations use `UV_EXCLUDE_NEWER="7 days"`, so packages must have been uploaded at least seven days ago. Production and E2E compile in parallel; dev and telemetry compile in parallel after production finishes. The cache is discarded when the container exits.
 3. Review the diff: `git diff requirements*.txt`
 4. Commit both the `.in` and `.txt` files together.
 
