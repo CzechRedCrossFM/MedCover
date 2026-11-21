@@ -64,7 +64,7 @@ HEARTBEAT_INTERVAL_SECONDS: int = 5
 
 # A job that keeps failing logs its full traceback at most this often (or when the
 # exception type changes), so a 3 s job cannot flood the exception log.
-FAILURE_TRACEBACK_INTERVAL_SECONDS: float = 15 * 60
+FAILURE_TRACEBACK_INTERVAL_SECONDS: int = 15 * 60
 
 
 @dataclass
