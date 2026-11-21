@@ -718,10 +718,12 @@ PR opened / updated
 GitHub Actions: ci.yml
   ├── lint job: pre-commit (flake8, mypy, pyupgrade, whitespace)
   ├── test job: MSSQL 2022 service → pytest --cov
-  └── audit job: pip-audit → check dependencies for known CVEs
+  └── audit job: pip-audit → check all Python lock files for known vulnerabilities
       ↓
 Review, approve, merge
 ```
+
+The audit job also runs daily at 04:17 UTC on the default branch. Every lock file is checked even if an earlier audit fails, and the job fails for any reported vulnerability or incomplete audit. Hashed pins are audited directly without installing application dependencies.
 
 Dependabot submits weekly PRs for `pip` and `github-actions` dependency updates with a seven-day release cooldown (configured in `.github/dependabot.yml`). Security updates bypass the cooldown.
 
@@ -739,9 +741,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
 
 jobs:
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -754,6 +759,7 @@ jobs:
         run: pre-commit run --all-files
 
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     services:
@@ -819,6 +825,8 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -827,7 +835,14 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Audit dependencies for known vulnerabilities
-        run: pip-audit -r requirements.txt
+        run: |
+          audit_status=0
+          for requirements in requirements*.txt; do
+            echo "::group::${requirements}"
+            pip-audit --strict --require-hashes --disable-pip -r "$requirements" || audit_status=1
+            echo "::endgroup::"
+          done
+          exit "$audit_status"
 ```
 
 ---
