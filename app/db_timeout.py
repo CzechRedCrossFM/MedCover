@@ -65,6 +65,9 @@ def attach_query_timeout(app: Flask, db: SQLAlchemy, seconds: int | None = None)
 
     @event.listens_for(engine, "checkin")
     def _reset_query_timeout(dbapi_connection: Any, _connection_record: Any) -> None:
+        # Not redundant with the checkout listener: pool_pre_ping pings before
+        # the checkout event fires, so a connection returned with a lifted
+        # limit would otherwise be pinged without one.
         # None after the connection was invalidated
         if dbapi_connection is None:
             return

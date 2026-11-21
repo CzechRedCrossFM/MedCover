@@ -11,7 +11,7 @@ import pytest
 import sqlalchemy as sa
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
 
-from app import db_timeout
+from app import create_app, db_timeout
 from app.backup import _container, downloaded_backup, export_to_zip, list_backups, prune_old_backups, restore_from_zip
 from app.extensions import db as _db
 from app.models.audit import AuditLogEntry
@@ -1082,6 +1082,39 @@ class TestScheduledBackupFailureHandling:
             # After the "restart", the day counts as attempted.
             assert run_scheduled_backup(_db.session, now=datetime(2026, 1, 1, 1, 1, tzinfo=timezone.utc)) is False
             assert len(seen) == 1
+
+    def test_statements_after_the_export_run_with_the_statement_timeout(self, app, monkeypatch):
+        """Only the export itself is exempt; the session must not keep its untimed connection."""
+        timed_app = create_app("testing", db_url=app.config["SQLALCHEMY_DATABASE_URI"], query_timeout=7)
+        with timed_app.app_context():
+            try:
+                settings = get_settings()
+                settings.backup_schedule_enabled = True
+                settings.backup_schedule_hour = 2
+                settings.backup_schedule_minute = 0
+                settings.backup_last_scheduled_run_date = None
+                _db.session.commit()
+
+                seen = {}
+
+                def session_timeout() -> int:
+                    return _db.session.connection().connection.dbapi_connection.timeout
+
+                def export(*args, **kwargs):
+                    seen["export"] = session_timeout()
+                    return "backup.zip"
+
+                def prune(_keep_count):
+                    seen["prune"] = session_timeout()
+                    return []
+
+                monkeypatch.setattr("app.scheduler_tasks.export_to_zip", export)
+                monkeypatch.setattr("app.scheduler_tasks.prune_old_backups", prune)
+                assert run_scheduled_backup(_db.session, now=datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)) is True
+                assert seen == {"export": 0, "prune": 7}
+            finally:
+                _db.session.remove()
+                _db.engine.dispose()
 
     def test_upload_failure_is_recorded_as_failed_backup(self, app, monkeypatch):
         """A storage error during upload goes through the normal failure path."""

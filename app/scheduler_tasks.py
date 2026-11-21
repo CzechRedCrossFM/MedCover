@@ -7,7 +7,7 @@ importing or patching the scheduler module itself.
 """
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -250,8 +250,10 @@ def run_admin_digest(db_session: Any, now: datetime | None = None) -> bool:
     return True
 
 
-def _record_failed_scheduled_backup(db_session: Any, exc: BaseException, today_local: date) -> bool:
-    """Log a failed scheduled backup and mark the day as attempted.
+def _record_failed_scheduled_backup(db_session: Any, exc: BaseException) -> bool:
+    """Log a failed scheduled backup and write an audit row.
+
+    The day was already stamped before the export, so this only reports.
 
     Always returns False so callers can ``return`` it directly.
     """
@@ -260,12 +262,6 @@ def _record_failed_scheduled_backup(db_session: Any, exc: BaseException, today_l
     # row so a session left dirty by the failure can't take the bookkeeping
     # commit down with it.
     db_session.rollback()
-    # Stamp the date on failure too. The task is polled every minute, so
-    # without this a persistent failure (full disk, unmounted share) would
-    # retry ~1440 times a day, each writing an audit row and a traceback.
-    # One attempt per local day; the error surfaces in the audit log and the
-    # admin digest.
-    get_settings().backup_last_scheduled_run_date = today_local
     db_session.add(
         AuditLogEntry(
             actor_id=None,
@@ -351,13 +347,15 @@ def run_scheduled_backup(db_session: Any, now: datetime | None = None) -> bool:
         # Full-table reads may legitimately exceed the scheduler's per-statement limit.
         with query_timeout_override(0):
             name = export_to_zip(now=now)
+            # End the export's read transaction inside the block; otherwise the
+            # session keeps its untimed connection for the statements below.
+            db_session.rollback()
     except Exception as exc:
-        return _record_failed_scheduled_backup(db_session, exc, today_local)
+        return _record_failed_scheduled_backup(db_session, exc)
 
     # Pruning is housekeeping, not part of the backup: a failure here (a
     # storage hiccup while listing or deleting) must not report the
-    # already-uploaded archive as a failed backup, nor leave the run unstamped
-    # and so re-exported on the next minute's tick.
+    # already-uploaded archive as a failed backup.
     try:
         pruned = prune_old_backups(settings.backup_keep_count)
     except AzureError as exc:
@@ -380,7 +378,7 @@ def run_scheduled_backup(db_session: Any, now: datetime | None = None) -> bool:
         db_session.commit()
         return True
     except Exception as exc:
-        return _record_failed_scheduled_backup(db_session, exc, today_local)
+        return _record_failed_scheduled_backup(db_session, exc)
 
 
 def cleanup_work_report_files(instance_path: str, now: datetime | None = None) -> int:
