@@ -594,7 +594,7 @@ Dependencies are compiled with **uv pip compile** (`.in` → `.txt` compilation 
 
 ### Dependabot
 
-Dependabot submits weekly PRs for `pip` and `GitHub Actions` dependency updates (configured in `.github/dependabot.yml`). Review and merge these regularly.
+Dependabot submits weekly PRs for `pip` and `GitHub Actions` dependency updates (configured in `.github/dependabot.yml`). Both use a seven-day release cooldown for version updates. Dependabot security updates bypass the cooldown. Review and merge these regularly.
 
 ---
 
@@ -723,7 +723,7 @@ GitHub Actions: ci.yml
 Review, approve, merge
 ```
 
-Dependabot submits weekly PRs for `pip` and `github-actions` dependency updates (configured in `.github/dependabot.yml`).
+Dependabot submits weekly PRs for `pip` and `github-actions` dependency updates with a seven-day release cooldown (configured in `.github/dependabot.yml`). Security updates bypass the cooldown.
 
 ### On merge to main
 
