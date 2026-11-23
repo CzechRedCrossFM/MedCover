@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-23
+
+### Added
+- Profile photos: users upload one on their profile, and users with `user.edit_any` can set or remove it on the user detail page. Photos are normalised to a 320×320 JPEG without metadata and stored in the database. Event and conditions assignment rows show the photo thumbnail (initials fallback) and the assignee's phone as a `tel:` link. Corrupt HEIC data and malformed EXIF in photo and signature uploads give a validation error instead of an HTTP 500. Phone numbers accept ASCII digits only; Unicode decimal digits are converted to ASCII. (#644)
+- The events table draws a thicker line between week, status or responsible-person groups, depending on the active sort. (#654)
+- DEV builds show a „DEV“ stamp on logos and icons. (#653)
+
+### Changed
+- gunicorn runs `gthread` workers (4 threads) with `--keep-alive 75` and recycles workers after 500 ± 50 requests, so idle connections no longer cause worker timeouts and memory does not build up. `docker-compose.prod.yml` uses the Dockerfile `CMD` instead of its own command. Under gunicorn, web requests get a 30 s per-statement SQL timeout, since gthread workers are no longer killed by gunicorn's `--timeout` on a hung query; migrations, the scheduler and the `flask` CLI run without it. (#619, #648)
+- Both iCal token columns are `NOT NULL`; a migration backfills missing tokens. (#651, #652)
+- Dependabot and the dependency refresh use a seven-day cooldown for version updates, all Python lockfiles are audited daily, and GitHub Actions versions are locked in `.github/workflows/actions.lock`. (#701)
+- Dependency updates: gunicorn 27.0.1, pyodbc 5.5.0, holidays 0.109, azure-storage-blob 12.31.1, azure-monitor-opentelemetry 1.8.12, playwright 1.65.2; dev tooling tox 4.67.13, pytest-env 1.8.6, faker 40.54.0. (#639, #640, #641, #642, #655, #656, #658, #659, #703, #704, #705, #706, #707)
+
+### Removed
+- **Breaking:** the Google Sheets event import. The admin page `/import/events/` with its preview, the offline converter `scripts/import_events.py` and their tests are gone; old `/import/` URLs return 404. Audit entries of imported events are unaffected. `auto_close_if_full()` drops the `context`/`allowed_from` parameters only the import used. (#698)
+
+### Fixed
+- The profile page no longer returns HTTP 500 when the user is changed concurrently; it no longer writes a missing iCal token during GET. (#651)
+- Icons that never rendered (Bootstrap Icons font was not loaded) are replaced with emoji. (#650)
+- The master event table manager remembers its status and event type filters across reloads („Výchozí“ resets them), hides archived events, and no longer throws on a master event without events. (#646)
+- A confirmed button can be clicked again after its submission was blocked (e.g. by native form validation on the backup upload-restore form); a button whose form fails validation shows the browser message without asking for confirmation. (#647)
+- Tinted event-type rows and list items use the normal border colour. (#654)
+
 ## [1.4.0] - 2026-11-07
 
 ### Added
@@ -529,7 +552,8 @@ První stabilní vydání MedCoveru. Aplikace nahrazuje původní tabulku v Goog
 - `sslmode=require` enforced for production `DATABASE_URL`
 - Feedback deletion blocked when `DEV_LOGIN_ENABLED=True` (test environment guard)
 
-[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/spidermila/MedCover/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/spidermila/MedCover/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/spidermila/MedCover/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/spidermila/MedCover/compare/v1.2.1...v1.2.2
