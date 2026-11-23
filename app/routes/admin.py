@@ -1,5 +1,6 @@
 import socket
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
@@ -13,9 +14,16 @@ from app.models.event import Event, EventStatus
 from app.models.feedback import UserFeedback
 from app.models.outbox import OutboxEmail
 from app.models.role import ALL_PERMISSIONS, ROLE_PERMISSIONS
-from app.models.settings import get_settings
+from app.models.settings import AppSettings, get_settings
 from app.models.user import UserAccount
-from app.utils import CS_COLLATION, get_or_404, last_page_redirect, page_arg, require_permission
+from app.utils import (
+    CS_COLLATION,
+    get_or_404,
+    last_page_redirect,
+    local_day_start_utc_or_none,
+    page_arg,
+    require_permission,
+)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -35,12 +43,17 @@ def _check_db_health() -> dict:
         status = "warning" if ms > _DB_WARN_MS else "ok"
         return {"status": status, "ms": ms, "error": None}
     except Exception as exc:
+        try:
+            db.session.rollback()
+        except Exception:
+            # a dead connection can fail the rollback too; the probe error is what we report
+            pass
         return {"status": "error", "ms": None, "error": type(exc).__name__}
 
 
-def _check_scheduler(settings: object, now: datetime) -> dict:
+def _check_scheduler(settings: AppSettings, now: datetime) -> dict:
     """Check scheduler heartbeat and return {status, last, age_s}."""
-    sched_last = settings.scheduler_last_seen  # type: ignore[attr-defined]
+    sched_last = settings.scheduler_last_seen
     if sched_last is None:
         return {"status": "unknown", "last": None, "age_s": None}
     age_s = int((now - sched_last).total_seconds())
@@ -53,15 +66,13 @@ def _check_scheduler(settings: object, now: datetime) -> dict:
     return {"status": status, "last": sched_last, "age_s": age_s}
 
 
-def _check_smtp(settings: object) -> dict:
+def _check_smtp(settings: AppSettings) -> dict:
     """Probe SMTP and return {configured, status, ms, error}."""
-    if not settings.smtp_configured:  # type: ignore[attr-defined]
+    if not settings.smtp_configured:
         return {"configured": False, "status": "unconfigured", "ms": None, "error": None}
     try:
         t0 = time.monotonic()
-        with socket.create_connection(  # type: ignore[attr-defined]
-            (settings.smtp_server, settings.smtp_port), timeout=3
-        ):
+        with socket.create_connection((settings.smtp_server, settings.smtp_port), timeout=3):
             pass
         ms = int((time.monotonic() - t0) * 1000)
         status = "warning" if ms > _SMTP_WARN_MS else "ok"
@@ -72,7 +83,7 @@ def _check_smtp(settings: object) -> dict:
             "status": "error",
             "ms": None,
             "error": f"Spojení na {settings.smtp_server}:{settings.smtp_port} vypršelo (timeout 3 s)",
-        }  # type: ignore[attr-defined]
+        }
     except OSError as exc:
         return {"configured": True, "status": "error", "ms": None, "error": str(exc)}
 
@@ -176,7 +187,7 @@ def index() -> str:
 def permissions() -> str:
     require_permission("admin.view")
 
-    role_names = list(ROLE_PERMISSIONS.keys())  # Admin, Coordinator, Member, Viewer
+    role_names = list(ROLE_PERMISSIONS.keys())
     return render_template(
         "admin/permissions.html",
         all_permissions=ALL_PERMISSIONS,
@@ -205,23 +216,25 @@ def audit_log_list() -> str | Response:
 
     if f_entity_type:
         query = query.where(AuditLogEntry.entity_type == f_entity_type)
-    if f_actor_id:
-        query = query.where(AuditLogEntry.actor_id == f_actor_id)
+    if f_actor_id == "system":
+        # "system" entries have no actor (actor_id IS NULL)
+        query = query.where(AuditLogEntry.actor_id.is_(None))
+    elif f_actor_id:
+        try:
+            actor_uuid = uuid.UUID(f_actor_id)
+        except ValueError:
+            f_actor_id = ""
+        else:
+            query = query.where(AuditLogEntry.actor_id == actor_uuid)
     if f_action_type:
         query = query.where(AuditLogEntry.action_type == f_action_type)
-    if f_date_from:
-        try:
-            dt_from = datetime.strptime(f_date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            query = query.where(AuditLogEntry.timestamp >= dt_from)
-        except ValueError:
-            pass
-    if f_date_to:
-        try:
-            dt_to = datetime.strptime(f_date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            # include the full day
-            query = query.where(AuditLogEntry.timestamp < dt_to + timedelta(days=1))
-        except ValueError:
-            pass
+    dt_from = local_day_start_utc_or_none(f_date_from)
+    if dt_from is not None:
+        query = query.where(AuditLogEntry.timestamp >= dt_from)
+    # the "to" day is inclusive: bound by the start of the next local day
+    dt_to = local_day_start_utc_or_none(f_date_to, next_day=True)
+    if dt_to is not None:
+        query = query.where(AuditLogEntry.timestamp < dt_to)
     if f_q:
         # Column collation (Czech_100_CI_AS_SC_UTF8) already gives us
         # case-insensitive matching, so a bare LIKE keeps the column reference

@@ -363,9 +363,11 @@ class TestUserReportDateFilter:
     def test_invalid_date_shows_error(self, app, client):
         admin_email, member_id = self._setup(app, "err")
         _login(client, admin_email)
-        resp = client.get(f"/reports/user/{member_id}?from_date=not-a-date")
+        resp = client.get(f"/reports/user/{member_id}?from_date=2026-01-01&to_date=not-a-date")
+        html = resp.get_data(as_text=True)
         assert resp.status_code == 200
-        assert "Neplatný formát data".encode() in resp.data
+        assert "Neplatný formát data" in html
+        assert 'value="not-a-date"' not in html
 
 
 # ── Per-ME report ─────────────────────────────────────────────────────────────
