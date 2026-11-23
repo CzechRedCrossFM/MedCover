@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from flask import template_rendered
 from sqlalchemy import event as sa_event
 
 from app.constants import RECORD_MODIFIED_MSG
@@ -18,6 +19,7 @@ from app.models.user import UserAccount
 from tests.conftest import (
     _make_event_in_status,
     _make_event_with_spot,
+    _make_rp_qual,
     _make_user,
     _post_with_stale_commit,
 )
@@ -1487,3 +1489,150 @@ class TestTableSpotsUpdateValidation:
                 db.select(EventSpot).where(EventSpot.event_id == event_id, EventSpot.required_qualifications.any())
             ).all()
             assert [[q.id for q in s.required_qualifications] for s in added] == [[active_id], [active_id]]
+
+
+class TestTableManagerEligibility:
+    @staticmethod
+    def _rows_for(client, me_id) -> list[dict]:
+        """Render the table and return per-row eligible emails and can_manage flags."""
+        captured: list[dict] = []
+
+        def _capture(sender, template, context, **extra):
+            if template.name != "master_events/table_manager.html":
+                return
+            captured.extend(
+                {
+                    "event_id": row["event"].id,
+                    "eligible": {u.email for u in row.get("eligible_users", [])},
+                    "can_manage": row["can_manage"],
+                }
+                for row in context["rows"]
+            )
+
+        template_rendered.connect(_capture, client.application)
+        try:
+            resp = client.get(f"/master-events/{me_id}/table")
+        finally:
+            template_rendered.disconnect(_capture, client.application)
+        assert resp.status_code == 200
+        return captured
+
+    @staticmethod
+    def _qual_row(app, qual: str, parents_of: dict[str, list[str]], holder: str | None):
+        """Create the named qualifications, link parents, a holder user and an ME with a spot needing `qual`."""
+        with app.app_context():
+            quals = {name: Qualification(name=name) for name in parents_of}
+            db.session.add_all(quals.values())
+            db.session.flush()
+            for name, parent_names in parents_of.items():
+                quals[name].parents = [quals[p] for p in parent_names]
+            holder_user = _make_user("holder@example.com", "Vymyšlený Jiří", Role.MEMBER)
+            if holder:
+                holder_user.qualifications = [quals[holder]]
+            _make_user("bez_kvalifikace@example.com", "Testovací Rudolf", Role.MEMBER)
+            me_id = _make_me("Kvalifikační ME").id
+            qual_ids = {name: q.id for name, q in quals.items()}
+            db.session.commit()
+        _, spot_id = _make_event_with_spot(app, me_id=me_id, name="Testovací akce")
+        with app.app_context():
+            db.session.get(EventSpot, spot_id).required_qualifications = [db.session.get(Qualification, qual_ids[qual])]
+            db.session.commit()
+        return me_id
+
+    def test_parent_qualification_fills_child_spot(self, app, admin_client):
+        me_id = self._qual_row(
+            app,
+            "Testovací podřízená",
+            {"Testovací nadřazená": [], "Testovací podřízená": ["Testovací nadřazená"]},
+            holder="Testovací nadřazená",
+        )
+
+        (row,) = self._rows_for(admin_client, me_id)
+        assert "holder@example.com" in row["eligible"]
+        assert "bez_kvalifikace@example.com" not in row["eligible"]
+
+    def test_qualification_cycle_terminates(self, app, admin_client):
+        me_id = self._qual_row(
+            app, "Testovací A", {"Testovací A": ["Testovací B"], "Testovací B": ["Testovací A"]}, holder=None
+        )
+
+        (row,) = self._rows_for(admin_client, me_id)
+        assert "holder@example.com" not in row["eligible"]
+
+    @staticmethod
+    def _rp_member_me(app, *, coordinated: bool) -> dict[str, int | str]:
+        """ME with an own event (RP member on spot 1, free spot 2) and a second event the member is not on."""
+        rp_qual_id = _make_rp_qual(app)
+        with app.app_context():
+            coordinator_id = _make_user("me_coord@example.com", "Vymyšlený Koordinátor", Role.COORDINATOR).id
+            me_id = _make_me("ME s RP", coordinator_id=coordinator_id if coordinated else None).id
+            user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "member@test.com"))
+            user.qualifications = [db.session.get(Qualification, rp_qual_id)]
+            db.session.commit()
+            user_id = str(user.id)
+        own_event_id, own_spot_id = _make_event_with_spot(app, me_id=me_id, name="Vlastní akce")
+        other_event_id, other_spot_id = _make_event_with_spot(app, me_id=me_id, name="Cizí akce")
+        with app.app_context():
+            free_spot = EventSpot(event_id=own_event_id)
+            db.session.add_all([Assignment(spot_id=own_spot_id, user_id=user_id), free_spot])
+            db.session.commit()
+            free_spot_id = free_spot.id
+        return {
+            "me_id": me_id,
+            "own_event_id": own_event_id,
+            "own_spot_id": own_spot_id,
+            "member_id": user_id,
+            "free_spot_id": free_spot_id,
+            "other_event_id": other_event_id,
+            "other_spot_id": other_spot_id,
+        }
+
+    def test_rp_elevated_member_manages_only_own_event(self, app, member_client):
+        ids = self._rp_member_me(app, coordinated=False)
+
+        rows = self._rows_for(member_client, ids["me_id"])
+        assert {r["event_id"]: r["can_manage"] for r in rows} == {
+            ids["own_event_id"]: True,
+            ids["other_event_id"]: False,
+        }
+        own_row = next(r for r in rows if r["event_id"] == ids["own_event_id"])
+        assert "member@test.com" in own_row["eligible"]
+
+    def test_rp_member_not_elevated_when_me_has_coordinator(self, app, member_client):
+        ids = self._rp_member_me(app, coordinated=True)
+
+        rows = self._rows_for(member_client, ids["me_id"])
+        assert [(r["can_manage"], r["eligible"]) for r in rows] == [(False, set()), (False, set())]
+
+        target_id = _make_member(app, "target_a@example.com", "Testovací Rudolf")
+        resp = _post_table_assign(member_client, ids["me_id"], ids["free_spot_id"], target_id)
+        assert resp.status_code == 403
+        assert set(_assignment_rows(app)) == {(ids["own_spot_id"], ids["member_id"])}
+
+    def test_rp_member_assigns_and_unassigns_on_own_event_only(self, app, member_client):
+        ids = self._rp_member_me(app, coordinated=False)
+        target_id = _make_member(app, "target_a@example.com", "Testovací Rudolf")
+        base = f"/master-events/{ids['me_id']}/table"
+
+        own_only = {(ids["own_spot_id"], ids["member_id"])}
+
+        resp = _post_table_assign(member_client, ids["me_id"], ids["other_spot_id"], target_id)
+        assert resp.status_code == 403
+        assert set(_assignment_rows(app)) == own_only
+
+        resp = _post_table_assign(member_client, ids["me_id"], ids["free_spot_id"], target_id)
+        assert resp.status_code == 200
+        assert set(_assignment_rows(app)) == own_only | {(ids["free_spot_id"], target_id)}
+
+        with app.app_context():
+            other_assignment = Assignment(spot_id=ids["other_spot_id"], user_id=target_id)
+            own_assignment_id = db.session.scalar(
+                db.select(Assignment.id).where(Assignment.spot_id == ids["free_spot_id"])
+            )
+            db.session.add(other_assignment)
+            db.session.commit()
+            other_assignment_id = other_assignment.id
+
+        assert member_client.post(f"{base}/unassign/{other_assignment_id}").status_code == 403
+        assert member_client.post(f"{base}/unassign/{own_assignment_id}").status_code == 200
+        assert set(_assignment_rows(app)) == own_only | {(ids["other_spot_id"], target_id)}
