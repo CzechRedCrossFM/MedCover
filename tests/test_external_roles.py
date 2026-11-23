@@ -45,7 +45,7 @@ def test_create_rejects_external_with_any_other_role(app, admin_client, other_ro
         "/users/create", data={"name": "Exclusive Target", "email": "target@test.com", "role_ids": selected}
     )
     assert response.status_code == 200
-    assert "Role External nesmí být kombinována" in response.get_data(as_text=True)
+    assert "Role „Externí“ nesmí být kombinována" in response.get_data(as_text=True)
     with app.app_context():
         assert db.session.scalar(db.select(UserAccount).where(UserAccount.email == "target@test.com")) is None
         assert user_audits() == before
@@ -70,7 +70,7 @@ def test_invalid_edit_rolls_back_info_roles_and_audit(app, admin_client):
         follow_redirects=True,
     )
     assert response.status_code == 200
-    assert "Role External nesmí být kombinována" in response.get_data(as_text=True)
+    assert "Role „Externí“ nesmí být kombinována" in response.get_data(as_text=True)
     with app.app_context():
         user = db.session.get(UserAccount, user_id)
         assert (user.name, user.email, user.phone, user.version) == (
@@ -88,7 +88,7 @@ def test_role_helper_validates_before_mutation_or_audit(app):
     with app.app_context():
         user = _make_user("target@test.com", "Exclusive Target", Role.MEMBER)
         before = user_audits()
-        with pytest.raises(ValueError, match="External"):
+        with pytest.raises(ValueError, match="Externí"):
             _apply_role_update(user, role_ids(Role.EXTERNAL, Role.VIEWER))
         assert [role.name for role in user.roles] == [Role.MEMBER]
         assert user_audits() == before
@@ -168,7 +168,7 @@ def test_bulk_can_add_and_remove_external_on_roleless_account(app, admin_client)
 def test_role_forms_explain_external_exclusivity(admin_client, url):
     response = admin_client.get(url)
     assert response.status_code == 200
-    assert "External" in response.get_data(as_text=True)
+    assert "„Externí“" in response.get_data(as_text=True)
     assert "kombinovat" in response.get_data(as_text=True)
 
 
@@ -183,3 +183,26 @@ def test_manual_create_accepts_external_alone(app, admin_client):
         user = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "target@test.com"))
         assert user.is_external
         assert [role.name for role in user.roles] == [Role.EXTERNAL]
+
+
+def test_external_role_is_shown_as_externi_while_its_name_stays_external(app, admin_client):
+    with app.app_context():
+        user = _make_user("eva@test.com", "Eva Nováková", Role.EXTERNAL)
+        user_id = user.id
+        role = user.roles[0]
+        role_id = role.id
+        assert (role.name, role.label, role.slug) == ("External", "Externí", "external")
+    assert "Externí</th>" in admin_client.get("/admin/permissions").get_data(as_text=True)
+
+    detail = admin_client.get(f"/users/{user_id}").get_data(as_text=True)
+    assert 'data-role-name="External"' in detail
+    assert f'<label class="form-check-label" for="role_{role_id}">Externí</label>' in detail
+
+    index = admin_client.get("/users/").get_data(as_text=True)
+    assert 'role=External"' in index and ">Externí</a>" in index
+    assert '<span class="badge bg-secondary">Externí</span>' in index
+    filtered = admin_client.get("/users/?role=External").get_data(as_text=True)
+    assert "Eva Nováková" in filtered
+
+    create = admin_client.get("/users/create").get_data(as_text=True)
+    assert 'data-role-name="External"' in create and ">Externí</label>" in create
