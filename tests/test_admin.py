@@ -2,16 +2,21 @@
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
+import sqlalchemy as sa
 from cryptography.fernet import Fernet
 
 from app.extensions import db
 from app.models.audit import AuditLogEntry
+from app.models.event import Event, EventStatus
+from app.models.master_event import MasterEvent
+from app.models.outbox import OutboxEmail
 from app.models.role import Role
 from app.models.settings import get_settings
-from app.routes.admin import _check_db_health
+from app.models.user import UserAccount
+from app.routes.admin import _admin_statistics, _check_db_health
 from app.utils import diff_changes
 from tests.conftest import _make_user
 
@@ -318,3 +323,120 @@ class TestDbHealthCheck:
             monkeypatch.setattr(db.session, "rollback", fail_rollback)
 
             assert _check_db_health()["error"] == "RuntimeError"
+
+
+_NOW = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
+
+
+class TestAdminStatistics:
+    def test_empty_database_returns_zero_ints(self, app):
+        with app.app_context():
+            stats = _admin_statistics(_NOW)
+
+        for key in ("user_total", "user_active", "user_pending", "user_archived", "event_total"):
+            assert type(stats[key]) is int
+            assert stats[key] == 0
+        assert list(stats["event_counts"]) == [s.value for s in EventStatus]
+        assert stats["event_counts"] == {s.value: 0 for s in EventStatus}
+        assert all(type(v) is int and v == 0 for v in stats["event_counts"].values())
+        for key in ("outbox_pending", "outbox_failed", "outbox_sent"):
+            assert type(stats[key]) is int
+            assert stats[key] == 0
+        assert stats["outbox_last_status"] is None
+        assert stats["outbox_last_sent"] is None
+        assert stats["recent_audit"] == []
+
+    def test_populated_dataset_matches_expected(self, app, admin_client):
+        with app.app_context():
+            for i, (active, archived) in enumerate(
+                [(True, False)] * 2 + [(False, False)] * 2 + [(True, True), (False, True)]
+            ):
+                db.session.add(
+                    UserAccount(
+                        email=f"stat{i}@medcover.local",
+                        name=f"Vymyšlený Uživatel {i}",
+                        password_hash="x",
+                        is_active=active,
+                        is_archived=archived,
+                    )
+                )
+            me = MasterEvent(name="Testovací nadřazená akce")
+            db.session.add(me)
+            db.session.flush()
+            creator = db.session.scalar(db.select(UserAccount).where(UserAccount.email == "admin@test.com"))
+            for status, archived in [
+                (EventStatus.DRAFT, False),
+                (EventStatus.PUBLISHED, True),
+                (EventStatus.COMPLETED, False),
+            ]:
+                db.session.add(
+                    Event(
+                        name=f"Testovací akce {status.value}",
+                        master_event_id=me.id,
+                        start_datetime=_NOW,
+                        end_datetime=_NOW + timedelta(hours=2),
+                        status=status,
+                        archived=archived,
+                        created_by_id=creator.id,
+                    )
+                )
+            for status, age, sent_age in [
+                ("pending", timedelta(hours=23, minutes=59), None),
+                ("pending", timedelta(hours=24), None),
+                ("failed", timedelta(hours=1), None),
+                ("sent", timedelta(hours=2), timedelta(hours=2)),
+                ("sent", timedelta(hours=24, minutes=1), timedelta(hours=24)),
+                ("sending", timedelta(hours=1, minutes=30), None),
+            ]:
+                db.session.add(
+                    OutboxEmail(
+                        to_email="prijemce@medcover.local",
+                        subject="Testovací zpráva",
+                        body="Text",
+                        status=status,
+                        created_at=_NOW - age,
+                        sent_at=_NOW - sent_age if sent_age else None,
+                    )
+                )
+            db.session.commit()
+
+            stats = _admin_statistics(_NOW)
+
+        recent_audit = stats.pop("recent_audit")
+        assert isinstance(recent_audit, list)
+        assert stats.pop("outbox_last_status") == "failed"
+        assert stats == {
+            # the admin user from the fixture is one more active, non-archived user
+            "user_total": 5,
+            "user_active": 3,
+            "user_pending": 2,
+            "user_archived": 2,
+            "event_total": 3,
+            "event_counts": {
+                s.value: 1 if s in (EventStatus.DRAFT, EventStatus.PUBLISHED, EventStatus.COMPLETED) else 0
+                for s in EventStatus
+            },
+            "outbox_pending": 2,
+            "outbox_failed": 1,
+            "outbox_sent": 1,
+            "outbox_last_sent": _NOW - timedelta(hours=2),
+            "feedback_count": 0,
+        }
+        counts = [v for k, v in stats.items() if k not in ("event_counts", "outbox_last_sent")]
+        assert all(type(v) is int for v in [*counts, *stats["event_counts"].values()])
+        assert admin_client.get("/admin/").status_code == 200
+
+    def test_uses_at_most_seven_select_statements(self, app):
+        statements: list[str] = []
+
+        def count(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        with app.app_context():
+            sa.event.listen(db.engine, "before_cursor_execute", count)
+            try:
+                _admin_statistics(_NOW)
+            finally:
+                sa.event.remove(db.engine, "before_cursor_execute", count)
+
+        assert len(statements) <= 7

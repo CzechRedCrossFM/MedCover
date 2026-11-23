@@ -90,36 +90,28 @@ def _check_smtp(settings: AppSettings) -> dict:
 
 def _admin_statistics(now: datetime) -> dict:
     """Collect user/event/outbox/audit statistics for the admin dashboard."""
-    user_total = db.session.scalar(
-        db.select(db.func.count()).select_from(UserAccount).where(UserAccount.is_archived == sa.false())
-    )
-    user_active = db.session.scalar(
-        db.select(db.func.count())
-        .select_from(UserAccount)
-        .where(UserAccount.is_active == sa.true(), UserAccount.is_archived == sa.false())
-    )
+    # SQL Server cannot use a bare bit column as a CASE predicate, hence the explicit comparisons
+    not_archived = UserAccount.is_archived == sa.false()
+    user_total, user_active, user_archived = db.session.execute(
+        db.select(
+            db.func.count(sa.case((not_archived, 1))),
+            db.func.count(sa.case((sa.and_(not_archived, UserAccount.is_active == sa.true()), 1))),
+            db.func.count(sa.case((UserAccount.is_archived == sa.true(), 1))),
+        )
+    ).one()
 
-    event_counts = {
-        s.value: db.session.scalar(db.select(db.func.count()).select_from(Event).where(Event.status == s))
-        for s in EventStatus
-    }
+    event_rows = db.session.execute(db.select(Event.status, db.func.count()).group_by(Event.status)).all()
+    counts_by_status = {status: count for status, count in event_rows}
+    event_counts = {s.value: counts_by_status.get(s, 0) for s in EventStatus}
 
     cutoff_24h = now - timedelta(hours=24)
-    outbox_pending = db.session.scalar(
-        db.select(db.func.count())
-        .select_from(OutboxEmail)
-        .where(OutboxEmail.status == "pending", OutboxEmail.created_at >= cutoff_24h)
-    )
-    outbox_failed = db.session.scalar(
-        db.select(db.func.count())
-        .select_from(OutboxEmail)
-        .where(OutboxEmail.status == "failed", OutboxEmail.created_at >= cutoff_24h)
-    )
-    outbox_sent = db.session.scalar(
-        db.select(db.func.count())
-        .select_from(OutboxEmail)
-        .where(OutboxEmail.status == "sent", OutboxEmail.created_at >= cutoff_24h)
-    )
+    outbox_rows = db.session.execute(
+        db.select(OutboxEmail.status, db.func.count())
+        .where(OutboxEmail.created_at >= cutoff_24h, OutboxEmail.status.in_(("pending", "failed", "sent")))
+        .group_by(OutboxEmail.status)
+    ).all()
+    outbox_by_status = {status: count for status, count in outbox_rows}
+
     outbox_last = db.session.scalar(db.select(OutboxEmail).order_by(OutboxEmail.created_at.desc()).limit(1))
     outbox_last_sent = db.session.scalar(
         db.select(OutboxEmail.sent_at).where(OutboxEmail.status == "sent").order_by(OutboxEmail.sent_at.desc()).limit(1)
@@ -133,14 +125,12 @@ def _admin_statistics(now: datetime) -> dict:
         "user_total": user_total,
         "user_active": user_active,
         "user_pending": user_total - user_active,
-        "user_archived": db.session.scalar(
-            db.select(db.func.count()).select_from(UserAccount).where(UserAccount.is_archived == sa.true())
-        ),
+        "user_archived": user_archived,
         "event_total": sum(event_counts.values()),
         "event_counts": event_counts,
-        "outbox_pending": outbox_pending,
-        "outbox_failed": outbox_failed,
-        "outbox_sent": outbox_sent,
+        "outbox_pending": outbox_by_status.get("pending", 0),
+        "outbox_failed": outbox_by_status.get("failed", 0),
+        "outbox_sent": outbox_by_status.get("sent", 0),
         "outbox_last_status": outbox_last.status if outbox_last else None,
         "outbox_last_sent": outbox_last_sent,
         "recent_audit": recent_audit,
