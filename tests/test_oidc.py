@@ -139,7 +139,8 @@ def test_init_app_accepts_https_public_url_in_production(app: Flask) -> None:
 
 
 def test_role_slug_matches_directory_names() -> None:
-    assert [oidc.role_slug(n) for n in (Role.ADMIN, Role.DEBRIEFING_MANAGER)] == ["admin", "debriefing-manager"]
+    names = (Role.ADMIN, Role.DEBRIEFING_MANAGER, Role.EXTERNAL)
+    assert [Role(name=n).slug for n in names] == ["admin", "debriefing-manager", "external"]
 
 
 def test_oidc_routes_are_absent_in_local_mode(client: Any) -> None:
