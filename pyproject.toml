@@ -26,7 +26,7 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=term-missing --cov-report=html:htmlcov -v -n auto"
+addopts = "--cov --cov-report=term-missing --cov-report=html:htmlcov -v -n auto"
 # Always use the dedicated test DB so tests never touch medcover_dev.
 # These are safe defaults; override with real values if needed.
 env = [
@@ -35,7 +35,7 @@ env = [
 ]
 
 [tool.coverage.run]
-source = ["app"]
+source = ["app", "scheduler"]
 omit = [
     "app/templates/*",
     "*/migrations/*",

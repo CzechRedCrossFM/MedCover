@@ -813,7 +813,7 @@ jobs:
       - name: Install dependencies
         run: pip install --require-hashes -r requirements-dev.txt
       - name: Run tests with coverage
-        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         if: always()
