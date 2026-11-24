@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-24
+
+### Changed
+- The „Placená akce“ switch on the new event form is checked by default; events created from a template, clones and edits still follow their source. (#709)
+
+### Fixed
+- After a validation error, the event form shows the paid switch exactly as submitted; an unchecked switch no longer comes back checked. (#709)
+
 ## [1.5.0] - 2026-11-23
 
 ### Added
@@ -552,7 +560,8 @@ První stabilní vydání MedCoveru. Aplikace nahrazuje původní tabulku v Goog
 - `sslmode=require` enforced for production `DATABASE_URL`
 - Feedback deletion blocked when `DEV_LOGIN_ENABLED=True` (test environment guard)
 
-[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/spidermila/MedCover/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/spidermila/MedCover/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/spidermila/MedCover/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/spidermila/MedCover/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/spidermila/MedCover/compare/v1.2.2...v1.3.0
