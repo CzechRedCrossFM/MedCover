@@ -55,6 +55,10 @@ def _event_form_data(master_event_id: int, name: str = "Test Event", rp_qual_id:
     return data
 
 
+def _paid_checked(html):
+    return " checked" in re.search(r'<input[^>]*name="paid"[^>]*>', html).group(0)
+
+
 @pytest.fixture
 def occupied_spot_edit(app):
     """An occupied RP spot with feedback and an unoccupied optional spot."""
@@ -463,6 +467,25 @@ class TestEventCreate:
         assert invalid_response.status_code == 200
         assert "Nová akce jako kopie" in invalid_response.data.decode()
 
+    def test_clone_and_edit_forms_follow_source_event_paid(self, app, admin_client):
+        event_id = _make_event_in_status(app, name="Paid Source")
+        urls = [f"/events/create?clone_event_id={event_id}", f"/events/{event_id}/edit"]
+        for paid in (False, True):
+            with app.app_context():
+                db.session.get(Event, event_id).paid = paid
+                db.session.commit()
+            for url in urls:
+                assert _paid_checked(admin_client.get(url).data.decode()) is paid, (url, paid)
+
+    def test_create_form_paid_checked_by_default(self, admin_client):
+        assert _paid_checked(admin_client.get("/events/create").data.decode())
+
+    def test_create_form_paid_preserved_on_validation_error(self, admin_client):
+        unchecked = admin_client.post("/events/create", data={"name": ""})
+        assert unchecked.status_code == 200 and not _paid_checked(unchecked.data.decode())
+        checked = admin_client.post("/events/create", data={"name": "", "paid": "1"})
+        assert checked.status_code == 200 and _paid_checked(checked.data.decode())
+
     def test_create_page_forbidden_for_member(self, member_client):
         response = member_client.get("/events/create")
         assert response.status_code == 403
@@ -480,6 +503,7 @@ class TestEventCreate:
             event = db.session.scalar(db.select(Event).where(Event.name == "Test Event"))
             assert event is not None
             assert event.status == EventStatus.DRAFT
+            assert event.paid is False
 
     def test_create_event_end_before_start_returns_error(self, app, admin_client):
         me_id = _make_master_event(app)
