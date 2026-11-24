@@ -16,24 +16,25 @@ def test_paid_toggle_switches_label(logged_in_page, base_url):
     label = page.locator("label.paid-label")
     assert label.count() > 0
 
-    # Initially unchecked — label should not have is-paid
-    assert "is-paid" not in (label.get_attribute("class") or "")
+    # Initially checked (new events are paid by default) — label should have is-paid
+    assert page.locator("#paid").is_checked()
+    assert "is-paid" in (label.get_attribute("class") or "")
 
     # Toggle via JS (Playwright click on Bootstrap switch labels is unreliable)
-    page.evaluate(
-        'var cb = document.getElementById("paid");' "cb.checked = true;" 'cb.dispatchEvent(new Event("change"));'
-    )
-    page.wait_for_timeout(300)
-    assert "is-paid" in (
-        label.get_attribute("class") or ""
-    ), f"Expected is-paid class, got: {label.get_attribute('class')}"
-
-    # Toggle back
     page.evaluate(
         'var cb = document.getElementById("paid");' "cb.checked = false;" 'cb.dispatchEvent(new Event("change"));'
     )
     page.wait_for_timeout(300)
-    assert "is-paid" not in (label.get_attribute("class") or "")
+    assert "is-paid" not in (
+        label.get_attribute("class") or ""
+    ), f"Expected no is-paid class, got: {label.get_attribute('class')}"
+
+    # Toggle back
+    page.evaluate(
+        'var cb = document.getElementById("paid");' "cb.checked = true;" 'cb.dispatchEvent(new Event("change"));'
+    )
+    page.wait_for_timeout(300)
+    assert "is-paid" in (label.get_attribute("class") or "")
 
 
 def test_event_type_training_shows_participants(logged_in_page, base_url):

@@ -303,9 +303,9 @@
         {# ── Paid ─────────────────────────────────────────────────────────── #}
         <div class="col-12 col-md-3 d-flex align-items-end">
           <div class="form-check form-switch mb-2">
-            {% set default_paid = '1' if (event and event.paid) else ('1' if (template and template.paid) else '0') %}
+            {% set paid_checked = (request.form.get('paid') == '1') if request.method == 'POST' else (event.paid if event else (template.paid if template else true)) %}
             <input class="form-check-input paid-toggle" type="checkbox" role="switch" id="paid" name="paid" value="1"
-                   {{ 'checked' if request.form.get('paid', default_paid) == '1' }}>
+                   {{ 'checked' if paid_checked }}>
             <label class="form-check-label fw-semibold paid-label" for="paid">Placená akce
               {{ help_icon("Označte, pokud je akce honorována. Zobrazuje se v přehledech a výkazech.") }}
             </label>

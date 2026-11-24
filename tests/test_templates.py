@@ -10,6 +10,7 @@ from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventTemplate, EventTemplateQualificationRequirement, StaffingMode
 from app.models.qualification import Qualification
 from tests.conftest import _make_master_event, _make_rp_qual
+from tests.test_events import _paid_checked
 
 
 def _form(qid, **extra):
@@ -163,6 +164,13 @@ def test_event_from_template_copies_complete_condition_plan(app, admin_client):
         assert (event.minimum_participants, event.maximum_participants) == (2, 4)
         assert event.qualification_requirements[0].qualification_id == qid
     assert admin_client.get("/events/create-from-template/99999999").status_code == 404
+
+
+def test_new_event_form_from_template_follows_template_paid(app, admin_client):
+    paid_tid = _make_template(app, name="Placená", paid=True)
+    unpaid_tid = _make_template(app, name="Neplacená", paid=False)
+    assert _paid_checked(admin_client.get(f"/events/create-from-template/{paid_tid}").data.decode())
+    assert not _paid_checked(admin_client.get(f"/events/create-from-template/{unpaid_tid}").data.decode())
 
 
 class TestTemplateLint:
