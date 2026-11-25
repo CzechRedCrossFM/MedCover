@@ -3,6 +3,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from html import unescape
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
@@ -669,3 +670,44 @@ def _post_with_stale_commit(
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_db.session, "commit", _raise)
         return client.post(url, data=data or {}, headers=headers or {})
+
+
+_ALERT_RE = re.compile(
+    r'<div class="alert alert-(\w+) alert-dismissible fade show" role="alert">\s*(.*?)\s*<button', re.DOTALL
+)
+
+
+def _alerts(html: bytes) -> list[tuple[str, str]]:
+    """Flash messages rendered by base.html as (category, text) pairs, in page order."""
+    return [(category, unescape(message)) for category, message in _ALERT_RE.findall(html.decode())]
+
+
+def _assert_redirect_flash(client, resp: TestResponse, location: str, expected: list[tuple[str, str]]) -> None:
+    """Assert a 302 to *location* whose page then shows exactly the *expected* flashes."""
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == location
+    assert _alerts(client.get(location).data) == expected
+
+
+TARGET_EMAIL = "upravovany@medcover.local"
+TARGET_NAME = "Testovací Upravovaný"
+
+
+def _make_target(app, email: str = TARGET_EMAIL, name: str = TARGET_NAME, role: str = Role.MEMBER) -> str:
+    """Create a user and return str(user.id)."""
+    with app.app_context():
+        return str(_make_user(email, name, role).id)
+
+
+def _snapshot(app, user_id: str) -> dict:
+    """Comparable view of a user's editable state, including version, roles and qualifications."""
+    with app.app_context():
+        user = _db.session.get(UserAccount, user_id)
+        return {
+            "name": user.name,
+            "email": user.email,
+            "phone": user.phone,
+            "version": user.version,
+            "roles": sorted(r.name for r in user.roles),
+            "qualifications": sorted(q.name for q in user.qualifications),
+        }
