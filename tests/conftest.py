@@ -19,6 +19,7 @@ from app import create_app
 from app.backup import _container
 from app.event_log import FIELD_LABELS, change_pairs
 from app.extensions import db as _db
+from app.extensions import mail as _flask_mail
 from app.models.audit import AuditLogEntry
 from app.models.event import Event, EventSpot, EventStatus
 from app.models.master_event import MasterEvent
@@ -483,6 +484,21 @@ def clean_db(app):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture
+def preserve_mail_config(app):
+    """Restore MAIL_* / _SMTP_FINGERPRINT and Flask-Mail state after a test that applies SMTP settings."""
+
+    def is_mail_key(k):
+        return k.startswith("MAIL_") or k == "_SMTP_FINGERPRINT"
+
+    snapshot = {k: v for k, v in app.config.items() if is_mail_key(k)}
+    yield
+    for k in [k for k in app.config if is_mail_key(k) and k not in snapshot]:
+        del app.config[k]
+    app.config.update(snapshot)
+    _flask_mail.init_app(app)
 
 
 @pytest.fixture
